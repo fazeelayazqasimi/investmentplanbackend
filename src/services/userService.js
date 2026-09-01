@@ -72,7 +72,7 @@ const updateUserProfile = async (userId, updates) => {
  * @returns {string} full referral link
  */
 const buildReferralLink = (referralCode) => {
-  const baseUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+  const baseUrl = process.env.CLIENT_URL || 'https://investmentplanfrontend.vercel.app';
   return `${baseUrl}/register?ref=${referralCode}`;
 };
 

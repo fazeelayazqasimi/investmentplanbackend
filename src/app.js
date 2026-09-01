@@ -12,17 +12,25 @@ const app = express();
 // ==========================================
 app.use(helmet());
 
-// CORS - restrict to configured client origin(s)
-const allowedOrigins = (process.env.CLIENT_URL || '')
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+// CORS - allow the configured client origin(s) plus the known deployment URLs.
+const DEFAULT_ORIGINS = [
+  'https://investmentplanfrontend.vercel.app',
+  'https://investmentplanbackend.vercel.app',
+  'http://127.0.0.1:5173',
+];
+const allowedOrigins = [
+  ...DEFAULT_ORIGINS,
+  ...(process.env.CLIENT_URL || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+];
 
 app.use(
   cors({
     origin: function (origin, callback) {
       // Allow requests with no origin (e.g. mobile apps, curl, Postman)
-      if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
