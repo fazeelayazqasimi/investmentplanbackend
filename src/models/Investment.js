@@ -113,7 +113,6 @@ const investmentSchema = new mongoose.Schema(
 // INDEXES
 // ==========================================
 investmentSchema.index({ user: 1, status: 1 });
-investmentSchema.index({ status: 1 });
 
 // ==========================================
 // VIRTUAL - Remaining ROI (derived, not stored)

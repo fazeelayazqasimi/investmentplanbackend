@@ -12,15 +12,17 @@ const app = express();
 // ==========================================
 app.use(helmet());
 
-// CORS - allow the configured client origin(s) plus the known deployment URLs.
+// CORS - allow the configured client origin(s) plus known deployment URLs.
 const DEFAULT_ORIGINS = [
   'https://investmentplanfrontend.vercel.app',
-  'https://investmentplanbackend.vercel.app',
+  'http://localhost:5173',
   'http://127.0.0.1:5173',
+  'http://localhost:5000',
+  'http://127.0.0.1:5000',
 ];
 const allowedOrigins = [
   ...DEFAULT_ORIGINS,
-  ...(process.env.CLIENT_URL || '')
+  ...(process.env.ALLOWED_ORIGINS || process.env.CLIENT_URL || '')
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean),
