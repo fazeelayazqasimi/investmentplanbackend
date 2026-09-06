@@ -109,13 +109,28 @@ app.use((req, res) => {
 // ==========================================
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error(err.stack || err.message);
 
   const statusCode = err.statusCode || (res.statusCode !== 200 ? res.statusCode : 500);
 
+  // Hide raw database/driver errors from the client.
+  // Return a clean, user-friendly message instead.
+  const isInternalError =
+    err.name === 'MongooseError' ||
+    err.name === 'MongoServerError' ||
+    err.name === 'MongoNetworkError' ||
+    err.message.includes('buffering timed out') ||
+    err.message.includes('buffering') ||
+    err.message.includes('ECONNREFUSED') ||
+    err.name === 'CastError';
+
+  const message = isInternalError
+    ? 'Unable to connect to the server. Please try again.'
+    : err.message || 'Internal Server Error';
+
   res.status(statusCode).json({
     success: false,
-    message: err.message || 'Internal Server Error',
+    message,
     errors: err.errors || [],
   });
 });

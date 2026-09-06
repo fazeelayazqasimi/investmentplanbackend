@@ -5,7 +5,6 @@ dotenv.config();
 
 const app = require('./app');
 const connectDB = require('./config/db');
-const roiService = require('./services/roiService');
 
 const PORT = process.env.PORT || 5000;
 
@@ -17,7 +16,7 @@ process.on('uncaughtException', (err) => {
 
 const startServer = async () => {
   try {
-    // Connect to MongoDB first
+    // Connect to MongoDB first — throws on failure (no process.exit)
     await connectDB();
 
     const server = app.listen(PORT, () => {
@@ -41,25 +40,36 @@ const startServer = async () => {
     });
 
     // ==========================================
-    // ROI DISTRIBUTION SCHEDULER
-    // Runs once per day to credit ROI for all active investments
-    // according to the configured ROI system. Only does work when
-    // roiProcessingEnabled is true (see SystemSettings).
+    // ROI DISTRIBUTION SCHEDULER (local dev only)
+    // Runs once per day to credit ROI for all active investments.
+    // NOTE: This setInterval only works in long-running processes
+    // (local development / traditional servers). In Vercel serverless,
+    // ROI must be triggered via the admin API endpoint
+    // POST /api/admin/roi/process or via an external cron service.
     // ==========================================
     const ROI_INTERVAL_MS = 24 * 60 * 60 * 1000;
-    setInterval(async () => {
-      try {
-        const result = await roiService.processAllActiveInvestments(new Date());
-        if (result.processed || result.skipped) {
-          console.log(
-            `[ROI] processed=${result.processed} skipped=${result.skipped}` +
-              (result.message ? ` (${result.message})` : '')
-          );
+    let roiService;
+    try {
+      roiService = require('./services/roiService');
+    } catch (_) {
+      // roiService not available — skip scheduler
+    }
+
+    if (roiService) {
+      setInterval(async () => {
+        try {
+          const result = await roiService.processAllActiveInvestments(new Date());
+          if (result.processed || result.skipped) {
+            console.log(
+              `[ROI] processed=${result.processed} skipped=${result.skipped}` +
+                (result.message ? ` (${result.message})` : '')
+            );
+          }
+        } catch (err) {
+          console.error(`[ROI] scheduler error: ${err.message}`);
         }
-      } catch (err) {
-        console.error(`[ROI] scheduler error: ${err.message}`);
-      }
-    }, ROI_INTERVAL_MS);
+      }, ROI_INTERVAL_MS);
+    }
   } catch (error) {
     console.error(`Failed to start server: ${error.message}`);
     process.exit(1);
