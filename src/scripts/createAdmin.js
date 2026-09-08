@@ -21,11 +21,12 @@ if (!MONGO_URI) {
   await mongoose.connect(MONGO_URI);
   console.log('Connected to MongoDB.');
 
-  const existing = await User.findOne({ email: email.toLowerCase() });
+  const existing = await User.findOne({ email: email.toLowerCase() }).select('+password');
   if (existing) {
     existing.role = 'ADMIN';
+    existing.password = password;
     await existing.save();
-    console.log(`Promoted existing user "${email}" to ADMIN.`);
+    console.log(`Promoted existing user "${email}" to ADMIN and updated password.`);
   } else {
     const user = new User({ name, email, phone, password, role: 'ADMIN' });
     await user.save();

@@ -1,4 +1,13 @@
 const User = require('../models/User');
+const SystemSettings = require('../models/SystemSettings');
+const walletService = require('./walletService');
+
+/**
+ * Rounds a number to 2 decimal places safely for currency values.
+ */
+const roundToTwoDecimals = (value) => {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+};
 
 /**
  * Fetches a user's profile by ID, excluding sensitive fields.
@@ -20,6 +29,51 @@ const getUserProfile = async (userId) => {
   }
 
   return user.toSafeObject();
+};
+
+/**
+ * Activates a user's account by deducting the activation fee from their
+ * main wallet balance. One-time only — subsequent calls are rejected.
+ *
+ * @param {string} userId
+ * @returns {Promise<{ transaction: Object, fee: number }>}
+ */
+const activateAccount = async (userId) => {
+  const settings = await SystemSettings.getSettings();
+  const fee = roundToTwoDecimals(settings.activationFee || 0);
+
+  if (fee <= 0) {
+    const error = new Error('Account activation is not required (fee is $0)');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    const error = new Error('User not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (user.isActivated) {
+    const error = new Error('Account is already activated');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const result = await walletService.adjustWalletBalance({
+    userId,
+    balanceField: 'mainBalance',
+    amount: -fee,
+    type: 'ACTIVATION_FEE',
+    description: `One-time account activation fee - $${fee}`,
+    createdBy: userId,
+  });
+
+  user.isActivated = true;
+  await user.save();
+
+  return { transaction: result.transaction, fee };
 };
 
 /**
@@ -80,5 +134,6 @@ module.exports = {
   getUserProfile,
   updateUserProfile,
   buildReferralLink,
+  activateAccount,
 };
 

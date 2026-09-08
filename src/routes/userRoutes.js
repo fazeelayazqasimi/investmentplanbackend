@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { getProfile, updateProfile } = require('../controllers/userController');
+const { getProfile, updateProfile, activateAccount, getPublicConfig } = require('../controllers/userController');
 const {
   getMyUpline,
   getMyDownlines,
@@ -16,8 +16,14 @@ const { authenticate } = require('../middleware/authMiddleware');
 // @route   GET /api/users/profile
 router.get('/profile', authenticate, getProfile);
 
+// @route   GET /api/users/config
+router.get('/config', authenticate, getPublicConfig);
+
 // @route   PUT /api/users/profile
 router.put('/profile', authenticate, updateProfile);
+
+// @route   POST /api/users/activate
+router.post('/activate', authenticate, activateAccount);
 
 // @route   GET /api/users/upline
 router.get('/upline', authenticate, getMyUpline);

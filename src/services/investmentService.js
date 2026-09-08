@@ -4,7 +4,6 @@ const Wallet = require('../models/Wallet');
 const User = require('../models/User');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
-const bonusService = require('./bonusService');
 
 /**
  * Rounds a number to 2 decimal places safely, avoiding common
@@ -93,51 +92,24 @@ const createInvestment = async ({
         throw error;
       }
 
-      // --- ACTIVATION FEE LOGIC ---
+      // --- ACCOUNT ACTIVATION CHECK ---
       const user = await User.findById(targetUserId).session(session);
-      const isActivated = user ? user.isActivated : false;
-      const activationFee = settings.activationFee || 0;
-      let actualInvestmentAmount = roundedAmount;
-
-      if (!isActivated && activationFee > 0) {
-        // First-time activation: split amount
-        if (roundedAmount <= activationFee) {
-          const error = new Error(
-            `Minimum investment for first-time activation is $${roundToTwoDecimals(activationFee + 0.01)}`
-          );
-          error.statusCode = 400;
-          throw error;
-        }
-        actualInvestmentAmount = roundToTwoDecimals(roundedAmount - activationFee);
-
-        // Deduct activation fee from main balance
-        await walletService.adjustWalletBalance({
-          userId: targetUserId,
-          balanceField: 'mainBalance',
-          amount: -activationFee,
-          type: 'ACTIVATION_FEE',
-          description: 'One-time account activation fee',
-          createdBy: createdByUserId,
-          session,
-        });
-
-        // Mark user as activated
-        user.isActivated = true;
-        await user.save({ session });
-      } else if (!isActivated && activationFee === 0) {
-        // No activation fee but first investment - still mark as activated
-        user.isActivated = true;
-        await user.save({ session });
+      if (user && !user.isActivated) {
+        const error = new Error(
+          'Please activate your account first before investing. Go to Dashboard > Activate Account.'
+        );
+        error.statusCode = 400;
+        throw error;
       }
 
-      // Create investment with ACTUAL investment amount (after activation fee)
+      // Create investment with full amount (activation is now a separate step)
       investment = await Investment.create(
         [
           {
             user: targetUserId,
             plan: resolvedPlanName,
-            originalAmount: actualInvestmentAmount,
-            maxReturnAmount: roundToTwoDecimals(actualInvestmentAmount * 2),
+            originalAmount: roundedAmount,
+            maxReturnAmount: roundToTwoDecimals(roundedAmount * 2),
             totalRoiEarned: 0,
             totalReturned: 0,
             status: 'ACTIVE',
@@ -152,18 +124,14 @@ const createInvestment = async ({
         { session }
       );
 
-      // Deduct remaining investment amount from main balance
+      // Deduct investment amount from main balance
       await walletService.adjustWalletBalance({
         userId: targetUserId,
         balanceField: 'mainBalance',
-        amount: -actualInvestmentAmount,
+        amount: -roundedAmount,
         type: 'INVESTMENT',
         investmentId: investment[0]._id,
-        description: `Investment: ${resolvedPlanName}${
-          !isActivated && activationFee > 0
-            ? ` (after $${activationFee} activation fee)`
-            : ''
-        }`,
+        description: `Investment: ${resolvedPlanName}`,
         createdBy: createdByUserId,
         session,
       });
@@ -172,9 +140,10 @@ const createInvestment = async ({
       // Income goes to the investor's uplines, NOT to the investor
       if (user && user.referredBy) {
         // Direct income -> direct upline (Level 1)
+        const bonusService = require('./bonusService');
         await bonusService.creditDirectIncome(
           user.referredBy,
-          actualInvestmentAmount,
+          roundedAmount,
           session
         );
 
@@ -183,7 +152,7 @@ const createInvestment = async ({
         if (directUpline && directUpline.referredBy) {
           await bonusService.creditLevelIncome(
             directUpline.referredBy,
-            actualInvestmentAmount,
+            roundedAmount,
             session
           );
         }

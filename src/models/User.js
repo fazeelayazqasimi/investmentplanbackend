@@ -129,6 +129,7 @@ function generateReferralCode() {
 // INSTANCE METHOD - Compare entered password with hashed password
 // ==========================================
 userSchema.methods.comparePassword = async function (enteredPassword) {
+  if (!this.password) return false;
   return bcrypt.compare(enteredPassword, this.password);
 };
 
