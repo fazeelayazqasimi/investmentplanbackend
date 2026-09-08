@@ -38,7 +38,7 @@ const adjustWalletBalance = async ({
   createdBy = null,
   session: externalSession = null,
 }) => {
-  const validFields = ['mainBalance', 'roiBalance', 'commissionBalance'];
+  const validFields = ['mainBalance', 'roiBalance', 'commissionBalance', 'ewalletBalance', 'profitShareBalance'];
   if (!validFields.includes(balanceField)) {
     throw new Error(`Invalid wallet balance field: ${balanceField}`);
   }
@@ -68,8 +68,9 @@ const adjustWalletBalance = async ({
 
     wallet[balanceField] = newBalance;
 
-    // Track cumulative lifetime earnings for ROI and COMMISSION credits only
-    if ((type === 'ROI' || type === 'COMMISSION') && roundedAmount > 0) {
+    // Track cumulative lifetime earnings for all credit types
+    const creditTypes = ['ROI', 'COMMISSION', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE'];
+    if (creditTypes.includes(type) && roundedAmount > 0) {
       wallet.totalEarnings = roundToTwoDecimals(wallet.totalEarnings + roundedAmount);
     }
 
@@ -284,6 +285,196 @@ const rejectDeposit = async (transactionId, adminId) => {
   return tx;
 };
 
+// ==========================================
+// ROI TRANSFER - ROI Wallet -> Main Wallet
+// ==========================================
+const transferRoiToMain = async (userId, adminOverride = false) => {
+  const SystemSettings = require('../models/SystemSettings');
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.roiTransferEnabled && !adminOverride) {
+    const error = new Error('ROI transfer is currently disabled by admin');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const today = new Date();
+  const currentDay = today.getUTCDate();
+  if (!adminOverride && currentDay !== settings.roiTransferDay) {
+    const error = new Error(`ROI transfer is only available on the ${settings.roiTransferDay}th of each month. Today is the ${currentDay}th.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      const wallet = await Wallet.findOne({ user: userId }).session(session);
+      if (!wallet) {
+        const error = new Error('Wallet not found');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      if (wallet.roiBalance <= 0) {
+        const error = new Error('No ROI balance available to transfer');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const amount = wallet.roiBalance;
+      wallet.roiBalance = 0;
+      wallet.mainBalance = roundToTwoDecimals(wallet.mainBalance + amount);
+      await wallet.save({ session });
+
+      const tx = await Transaction.create(
+        [{
+          user: userId,
+          amount,
+          type: 'ROI_TRANSFER',
+          status: 'COMPLETED',
+          description: `ROI transfer from ROI Wallet to Main Wallet - $${amount}`,
+          reference: null,
+          createdBy: null,
+        }],
+        { session }
+      );
+
+      result = { amount, transaction: tx[0] };
+    });
+    return result;
+  } finally {
+    session.endSession();
+  }
+};
+
+// ==========================================
+// PROFIT SHARE TRANSFER - Profit Share Wallet -> Main Wallet
+// ==========================================
+const transferProfitShareToMain = async (userId, adminOverride = false) => {
+  const SystemSettings = require('../models/SystemSettings');
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.profitShareTransferEnabled && !adminOverride) {
+    const error = new Error('Profit Share transfer is currently disabled by admin');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const today = new Date();
+  const currentDay = today.getUTCDate();
+  if (!adminOverride && currentDay !== settings.profitShareTransferDay) {
+    const error = new Error(`Profit Share transfer is only available on the ${settings.profitShareTransferDay}th of each month. Today is the ${currentDay}th.`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      const wallet = await Wallet.findOne({ user: userId }).session(session);
+      if (!wallet) {
+        const error = new Error('Wallet not found');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      if (wallet.profitShareBalance <= 0) {
+        const error = new Error('No Profit Share balance available to transfer');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const amount = wallet.profitShareBalance;
+      wallet.profitShareBalance = 0;
+      wallet.mainBalance = roundToTwoDecimals(wallet.mainBalance + amount);
+      await wallet.save({ session });
+
+      const tx = await Transaction.create(
+        [{
+          user: userId,
+          amount,
+          type: 'PROFIT_SHARE_TRANSFER',
+          status: 'COMPLETED',
+          description: `Profit Share transfer from Profit Share Wallet to Main Wallet - $${amount}`,
+          reference: null,
+          createdBy: null,
+        }],
+        { session }
+      );
+
+      result = { amount, transaction: tx[0] };
+    });
+    return result;
+  } finally {
+    session.endSession();
+  }
+};
+
+// ==========================================
+// ADMIN TRIGGER - Process ROI transfer for ALL eligible users
+// ==========================================
+const adminTriggerRoiTransfer = async () => {
+  const SystemSettings = require('../models/SystemSettings');
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.roiTransferEnabled) {
+    const error = new Error('ROI transfer is currently disabled');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const wallets = await Wallet.find({ roiBalance: { $gt: 0 } });
+  let processed = 0;
+  let totalAmount = 0;
+  const errors = [];
+
+  for (const wallet of wallets) {
+    try {
+      const result = await transferRoiToMain(wallet.user, true);
+      processed++;
+      totalAmount = roundToTwoDecimals(totalAmount + result.amount);
+    } catch (error) {
+      errors.push({ userId: wallet.user.toString(), message: error.message });
+    }
+  }
+
+  return { processed, totalAmount, errors };
+};
+
+// ==========================================
+// ADMIN TRIGGER - Process Profit Share transfer for ALL eligible users
+// ==========================================
+const adminTriggerProfitShareTransfer = async () => {
+  const SystemSettings = require('../models/SystemSettings');
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.profitShareTransferEnabled) {
+    const error = new Error('Profit Share transfer is currently disabled');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const wallets = await Wallet.find({ profitShareBalance: { $gt: 0 } });
+  let processed = 0;
+  let totalAmount = 0;
+  const errors = [];
+
+  for (const wallet of wallets) {
+    try {
+      const result = await transferProfitShareToMain(wallet.user, true);
+      processed++;
+      totalAmount = roundToTwoDecimals(totalAmount + result.amount);
+    } catch (error) {
+      errors.push({ userId: wallet.user.toString(), message: error.message });
+    }
+  }
+
+  return { processed, totalAmount, errors };
+};
+
 module.exports = {
   adjustWalletBalance,
   getWallet,
@@ -292,4 +483,8 @@ module.exports = {
   approveDeposit,
   rejectDeposit,
   roundToTwoDecimals,
+  transferRoiToMain,
+  transferProfitShareToMain,
+  adminTriggerRoiTransfer,
+  adminTriggerProfitShareTransfer,
 };

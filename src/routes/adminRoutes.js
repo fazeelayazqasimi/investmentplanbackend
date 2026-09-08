@@ -10,6 +10,9 @@ const {
   getSettings,
   updateSettings,
   processRoi,
+  distributeProfitShare,
+  triggerRoiTransfer,
+  triggerProfitShareTransfer,
 } = require('../controllers/adminController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
@@ -33,5 +36,12 @@ router.put('/settings', updateSettings);
 
 // ROI processing
 router.post('/roi/process', processRoi);
+
+// ROI Transfer
+router.post('/roi/transfer', triggerRoiTransfer);
+
+// Profit Share
+router.post('/profit-share/distribute', distributeProfitShare);
+router.post('/profit-share/transfer', triggerProfitShareTransfer);
 
 module.exports = router;

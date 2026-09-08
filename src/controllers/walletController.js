@@ -112,6 +112,36 @@ const rejectDeposit = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Transfer ROI Wallet -> Main Wallet
+// @route   POST /api/wallet/transfer/roi
+// @access  Private (User)
+// ==========================================
+const transferRoi = asyncHandler(async (req, res) => {
+  const result = await walletService.transferRoiToMain(req.user.id);
+
+  res.status(200).json({
+    success: true,
+    message: 'ROI transferred to main wallet successfully',
+    data: result,
+  });
+});
+
+// ==========================================
+// @desc    Transfer Profit Share Wallet -> Main Wallet
+// @route   POST /api/wallet/transfer/profit-share
+// @access  Private (User)
+// ==========================================
+const transferProfitShare = asyncHandler(async (req, res) => {
+  const result = await walletService.transferProfitShareToMain(req.user.id);
+
+  res.status(200).json({
+    success: true,
+    message: 'Profit Share transferred to main wallet successfully',
+    data: result,
+  });
+});
+
 module.exports = {
   getMyWallet,
   getMyTransactions,
@@ -119,4 +149,6 @@ module.exports = {
   getPendingDeposits,
   approveDeposit,
   rejectDeposit,
+  transferRoi,
+  transferProfitShare,
 };

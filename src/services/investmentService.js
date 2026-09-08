@@ -1,8 +1,10 @@
 const mongoose = require('mongoose');
 const Investment = require('../models/Investment');
 const Wallet = require('../models/Wallet');
+const User = require('../models/User');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
+const bonusService = require('./bonusService');
 
 /**
  * Rounds a number to 2 decimal places safely, avoiding common
@@ -91,13 +93,51 @@ const createInvestment = async ({
         throw error;
       }
 
+      // --- ACTIVATION FEE LOGIC ---
+      const user = await User.findById(targetUserId).session(session);
+      const isActivated = user ? user.isActivated : false;
+      const activationFee = settings.activationFee || 0;
+      let actualInvestmentAmount = roundedAmount;
+
+      if (!isActivated && activationFee > 0) {
+        // First-time activation: split amount
+        if (roundedAmount <= activationFee) {
+          const error = new Error(
+            `Minimum investment for first-time activation is $${roundToTwoDecimals(activationFee + 0.01)}`
+          );
+          error.statusCode = 400;
+          throw error;
+        }
+        actualInvestmentAmount = roundToTwoDecimals(roundedAmount - activationFee);
+
+        // Deduct activation fee from main balance
+        await walletService.adjustWalletBalance({
+          userId: targetUserId,
+          balanceField: 'mainBalance',
+          amount: -activationFee,
+          type: 'ACTIVATION_FEE',
+          description: 'One-time account activation fee',
+          createdBy: createdByUserId,
+          session,
+        });
+
+        // Mark user as activated
+        user.isActivated = true;
+        await user.save({ session });
+      } else if (!isActivated && activationFee === 0) {
+        // No activation fee but first investment - still mark as activated
+        user.isActivated = true;
+        await user.save({ session });
+      }
+
+      // Create investment with ACTUAL investment amount (after activation fee)
       investment = await Investment.create(
         [
           {
             user: targetUserId,
             plan: resolvedPlanName,
-            originalAmount: roundedAmount,
-            maxReturnAmount: roundToTwoDecimals(roundedAmount * 2),
+            originalAmount: actualInvestmentAmount,
+            maxReturnAmount: roundToTwoDecimals(actualInvestmentAmount * 2),
             totalRoiEarned: 0,
             totalReturned: 0,
             status: 'ACTIVE',
@@ -112,19 +152,42 @@ const createInvestment = async ({
         { session }
       );
 
-      // Deduct from main balance atomically within the same session.
-      // adjustWalletBalance throws on insufficient funds — which aborts the
-      // whole transaction, so the investment is never left dangling.
+      // Deduct remaining investment amount from main balance
       await walletService.adjustWalletBalance({
         userId: targetUserId,
         balanceField: 'mainBalance',
-        amount: -roundedAmount,
+        amount: -actualInvestmentAmount,
         type: 'INVESTMENT',
         investmentId: investment[0]._id,
-        description: `Investment: ${resolvedPlanName}`,
+        description: `Investment: ${resolvedPlanName}${
+          !isActivated && activationFee > 0
+            ? ` (after $${activationFee} activation fee)`
+            : ''
+        }`,
         createdBy: createdByUserId,
         session,
       });
+
+      // --- DIRECT & LEVEL INCOME ---
+      // Income goes to the investor's uplines, NOT to the investor
+      if (user && user.referredBy) {
+        // Direct income -> direct upline (Level 1)
+        await bonusService.creditDirectIncome(
+          user.referredBy,
+          actualInvestmentAmount,
+          session
+        );
+
+        // Level 2 income -> indirect upline (Level 2)
+        const directUpline = await User.findById(user.referredBy).session(session);
+        if (directUpline && directUpline.referredBy) {
+          await bonusService.creditLevelIncome(
+            directUpline.referredBy,
+            actualInvestmentAmount,
+            session
+          );
+        }
+      }
     });
 
     return investment[0];

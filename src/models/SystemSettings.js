@@ -58,6 +58,86 @@ const systemSettingsSchema = new mongoose.Schema(
     },
 
     // ==========================================
+    // E-WALLET SETTINGS
+    // ==========================================
+    ewalletEnabled: {
+      type: Boolean,
+      default: true,
+    },
+    ewalletUsageEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    signupBonusAmount: {
+      type: Number,
+      default: 10,
+      min: [0, 'Signup bonus cannot be negative'],
+    },
+    uplineSignupBonusAmount: {
+      type: Number,
+      default: 5,
+      min: [0, 'Upline bonus cannot be negative'],
+    },
+
+    // ==========================================
+    // ACTIVATION SETTINGS
+    // ==========================================
+    activationFee: {
+      type: Number,
+      default: 10,
+      min: [0, 'Activation fee cannot be negative'],
+    },
+
+    // ==========================================
+    // INCOME SETTINGS
+    // ==========================================
+    directIncomePercentage: {
+      type: Number,
+      default: 10,
+      min: [0, 'Direct income percentage cannot be negative'],
+      max: [100, 'Direct income percentage cannot exceed 100'],
+    },
+    levelIncomePercentage: {
+      type: Number,
+      default: 5,
+      min: [0, 'Level income percentage cannot be negative'],
+      max: [100, 'Level income percentage cannot exceed 100'],
+    },
+
+    // ==========================================
+    // ROI TRANSFER SETTINGS
+    // ==========================================
+    roiTransferEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    roiTransferDay: {
+      type: Number,
+      default: 1,
+      min: [1, 'Transfer day must be at least 1'],
+      max: [31, 'Transfer day cannot exceed 31'],
+    },
+
+    // ==========================================
+    // PROFIT SHARE SETTINGS
+    // ==========================================
+    profitShareTransferEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    profitShareTransferDay: {
+      type: Number,
+      default: 15,
+      min: [1, 'Transfer day must be at least 1'],
+      max: [31, 'Transfer day cannot exceed 31'],
+    },
+    profitShareDistributionMethod: {
+      type: String,
+      enum: ['EQUAL', 'PROPORTIONAL'],
+      default: 'EQUAL',
+    },
+
+    // ==========================================
     // INVESTMENT PLANS CATALOG
     // (used by the user-facing plan selection UI)
     // ==========================================

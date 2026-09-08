@@ -1,6 +1,8 @@
 const asyncHandler = require('express-async-handler');
+const mongoose = require('mongoose');
 const User = require('../models/User');
 const generateToken = require('../utils/generateToken');
+const bonusService = require('../services/bonusService');
 
 // ==========================================
 // @desc    Register a new user
@@ -30,26 +32,38 @@ const register = asyncHandler(async (req, res) => {
     referredBy = upline._id;
   }
 
-  // Create user (password hashing + referral code generation
-  // happen automatically via Mongoose pre-save middleware)
-  const user = await User.create({
-    name,
-    email,
-    phone,
-    password,
-    referredBy,
-  });
+  // Create user + bonuses atomically in a single MongoDB session
+  const session = await mongoose.startSession();
+  try {
+    let newUser;
+    await session.withTransaction(async () => {
+      newUser = await User.create(
+        [{ name, email, phone, password, referredBy }],
+        { session }
+      );
 
-  const token = generateToken(user._id, user.role);
+      // Process signup and upline bonuses (atomic with user creation)
+      await bonusService.processRegistrationBonuses(
+        newUser[0]._id,
+        referredBy,
+        session
+      );
+    });
 
-  res.status(201).json({
-    success: true,
-    message: 'Registration successful',
-    data: {
-      user: user.toSafeObject(),
-      token,
-    },
-  });
+    const user = newUser[0];
+    const token = generateToken(user._id, user.role);
+
+    res.status(201).json({
+      success: true,
+      message: 'Registration successful',
+      data: {
+        user: user.toSafeObject(),
+        token,
+      },
+    });
+  } finally {
+    session.endSession();
+  }
 });
 
 // ==========================================

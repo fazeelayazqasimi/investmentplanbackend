@@ -7,6 +7,8 @@ const Transaction = require('../models/Transaction');
 const ROIHistory = require('../models/ROIHistory');
 const SystemSettings = require('../models/SystemSettings');
 const roiService = require('../services/roiService');
+const walletService = require('../services/walletService');
+const bonusService = require('../services/bonusService');
 
 // ==========================================
 // @desc    List all users (admin only)
@@ -73,7 +75,7 @@ const listUsers = asyncHandler(async (req, res) => {
               $map: {
                 input: { $filter: { input: '$txns', as: 't', cond: { $eq: ['$$t.type', 'INVESTMENT'] } } },
                 as: 'x',
-                in: '$$x.amount',
+                in: { $abs: '$$x.amount' },
               },
             },
           },
@@ -150,7 +152,16 @@ const getUserDetail = asyncHandler(async (req, res) => {
     User.find({ referredBy: userId }).select('name email accountStatus createdAt').lean(),
     Transaction.aggregate([
       { $match: { user: new mongoose.Types.ObjectId(userId) } },
-      { $group: { _id: { type: '$type', status: '$status' }, total: { $sum: '$amount' } } },
+      {
+        $group: {
+          _id: { type: '$type', status: '$status' },
+          total: {
+            $sum: {
+              $cond: [{ $eq: ['$type', 'INVESTMENT'] }, { $abs: '$amount' }, '$amount'],
+            },
+          },
+        },
+      },
     ]),
   ]);
 
@@ -316,7 +327,7 @@ const getStats = asyncHandler(async (req, res) => {
     ]),
     Transaction.aggregate([
       { $match: { type: 'INVESTMENT', status: 'COMPLETED' } },
-      { $group: { _id: null, total: { $sum: '$amount' } } },
+      { $group: { _id: null, total: { $sum: { $abs: '$amount' } } } },
     ]),
     Transaction.aggregate([
       { $match: { type: 'ROI', status: 'COMPLETED' } },
@@ -448,6 +459,23 @@ const updateSettings = asyncHandler(async (req, res) => {
     'roiMode',
     'roiProcessingEnabled',
     'overallRoiPercentage',
+    // E-Wallet
+    'ewalletEnabled',
+    'ewalletUsageEnabled',
+    'signupBonusAmount',
+    'uplineSignupBonusAmount',
+    // Activation
+    'activationFee',
+    // Income
+    'directIncomePercentage',
+    'levelIncomePercentage',
+    // ROI Transfer
+    'roiTransferEnabled',
+    'roiTransferDay',
+    // Profit Share
+    'profitShareTransferEnabled',
+    'profitShareTransferDay',
+    'profitShareDistributionMethod',
   ];
   allowedScalars.forEach((key) => {
     if (body[key] !== undefined) settings[key] = body[key];
@@ -488,6 +516,57 @@ const processRoi = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Distribute profit share to all users (admin only)
+// @route   POST /api/admin/profit-share/distribute
+// @access  Private (Admin)
+// ==========================================
+const distributeProfitShare = asyncHandler(async (req, res) => {
+  const { amount, method } = req.body;
+  if (!amount || amount <= 0) {
+    res.status(400);
+    throw new Error('Distribution amount must be greater than zero');
+  }
+  const result = await bonusService.distributeProfitShare(
+    Number(amount),
+    req.user.id,
+    method
+  );
+  res.status(200).json({
+    success: true,
+    message: 'Profit share distributed successfully',
+    data: result,
+  });
+});
+
+// ==========================================
+// @desc    Trigger ROI transfer for all eligible users (admin only)
+// @route   POST /api/admin/roi/transfer
+// @access  Private (Admin)
+// ==========================================
+const triggerRoiTransfer = asyncHandler(async (req, res) => {
+  const result = await walletService.adminTriggerRoiTransfer();
+  res.status(200).json({
+    success: true,
+    message: 'ROI transfer triggered',
+    data: result,
+  });
+});
+
+// ==========================================
+// @desc    Trigger profit share transfer for all eligible users (admin only)
+// @route   POST /api/admin/profit-share/transfer
+// @access  Private (Admin)
+// ==========================================
+const triggerProfitShareTransfer = asyncHandler(async (req, res) => {
+  const result = await walletService.adminTriggerProfitShareTransfer();
+  res.status(200).json({
+    success: true,
+    message: 'Profit share transfer triggered',
+    data: result,
+  });
+});
+
 module.exports = {
   listUsers,
   getUserDetail,
@@ -497,4 +576,7 @@ module.exports = {
   getSettings,
   updateSettings,
   processRoi,
+  distributeProfitShare,
+  triggerRoiTransfer,
+  triggerProfitShareTransfer,
 };

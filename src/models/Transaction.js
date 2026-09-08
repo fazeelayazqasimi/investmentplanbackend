@@ -25,7 +25,13 @@ const transactionSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ['INVESTMENT', 'ROI', 'COMMISSION', 'DEPOSIT', 'WITHDRAWAL', 'ADJUSTMENT'],
+      enum: [
+        'INVESTMENT', 'ROI', 'COMMISSION', 'DEPOSIT', 'WITHDRAWAL', 'ADJUSTMENT',
+        'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS', 'ACTIVATION_FEE',
+        'DIRECT_INCOME', 'LEVEL_INCOME',
+        'ROI_TRANSFER', 'PROFIT_SHARE', 'PROFIT_SHARE_TRANSFER',
+        'E_WALLET_USAGE',
+      ],
       required: [true, 'Transaction type is required'],
       index: true,
     },

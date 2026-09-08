@@ -8,6 +8,8 @@ const {
   getPendingDeposits,
   approveDeposit,
   rejectDeposit,
+  transferRoi,
+  transferProfitShare,
 } = require('../controllers/walletController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
@@ -23,6 +25,12 @@ router.get('/transactions', authenticate, getMyTransactions);
 
 // @route   POST /api/wallet/deposit  (user submits a deposit request)
 router.post('/deposit', authenticate, requestDeposit);
+
+// @route   POST /api/wallet/transfer/roi
+router.post('/transfer/roi', authenticate, transferRoi);
+
+// @route   POST /api/wallet/transfer/profit-share
+router.post('/transfer/profit-share', authenticate, transferProfitShare);
 
 // ==========================================
 // ADMIN ROUTES (deposit approval workflow)

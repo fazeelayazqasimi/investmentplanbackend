@@ -28,7 +28,19 @@ const walletSchema = new mongoose.Schema(
       min: [0, 'Commission balance cannot be negative'],
     },
 
-    // Cumulative lifetime earnings (ROI + commission combined).
+    ewalletBalance: {
+      type: Number,
+      default: 0,
+      min: [0, 'E-Wallet balance cannot be negative'],
+    },
+
+    profitShareBalance: {
+      type: Number,
+      default: 0,
+      min: [0, 'Profit Share balance cannot be negative'],
+    },
+
+    // Cumulative lifetime earnings (ROI + commission + bonuses combined).
     // This is a running total for display purposes — it does not
     // decrease even if balances are later withdrawn/spent, since it
     // represents "total earned," not "current balance."
