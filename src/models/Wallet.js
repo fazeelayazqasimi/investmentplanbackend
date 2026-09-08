@@ -40,6 +40,34 @@ const walletSchema = new mongoose.Schema(
       min: [0, 'Profit Share balance cannot be negative'],
     },
 
+    pendingCommissions: {
+      type: Number,
+      default: 0,
+      min: [0, 'Pending commissions cannot be negative'],
+    },
+
+    fundBalance: {
+      type: Number,
+      default: 0,
+      min: [0, 'Fund balance cannot be negative'],
+    },
+
+    // Cumulative network income (Direct + Level) earned by this user.
+    // Used for 3X network income cap enforcement.
+    totalNetworkIncome: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Sum of downline investment amounts that generated network income
+    // for this user. Used as the base for 3X cap calculation.
+    eligibleInvestmentBase: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
     // Cumulative lifetime earnings (ROI + commission + bonuses combined).
     // This is a running total for display purposes — it does not
     // decrease even if balances are later withdrawn/spent, since it

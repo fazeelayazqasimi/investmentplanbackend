@@ -8,6 +8,7 @@ const ROIHistory = require('../models/ROIHistory');
 const SystemSettings = require('../models/SystemSettings');
 const roiService = require('../services/roiService');
 const walletService = require('../services/walletService');
+const { roundToTwoDecimals } = require('../services/walletService');
 const bonusService = require('../services/bonusService');
 
 // ==========================================
@@ -55,6 +56,10 @@ const listUsers = asyncHandler(async (req, res) => {
           mainBalance: { $ifNull: [{ $arrayElemAt: ['$wallet.mainBalance', 0] }, 0] },
           roiBalance: { $ifNull: [{ $arrayElemAt: ['$wallet.roiBalance', 0] }, 0] },
           commissionBalance: { $ifNull: [{ $arrayElemAt: ['$wallet.commissionBalance', 0] }, 0] },
+          ewalletBalance: { $ifNull: [{ $arrayElemAt: ['$wallet.ewalletBalance', 0] }, 0] },
+          profitShareBalance: { $ifNull: [{ $arrayElemAt: ['$wallet.profitShareBalance', 0] }, 0] },
+          pendingCommissions: { $ifNull: [{ $arrayElemAt: ['$wallet.pendingCommissions', 0] }, 0] },
+          fundBalance: { $ifNull: [{ $arrayElemAt: ['$wallet.fundBalance', 0] }, 0] },
           totalDeposited: {
             $sum: {
               $map: {
@@ -174,10 +179,18 @@ const getUserDetail = asyncHandler(async (req, res) => {
     mainBalance: wallet ? wallet.mainBalance : 0,
     roiBalance: wallet ? wallet.roiBalance : 0,
     commissionBalance: wallet ? wallet.commissionBalance : 0,
+    ewalletBalance: wallet ? wallet.ewalletBalance : 0,
+    profitShareBalance: wallet ? wallet.profitShareBalance : 0,
+    pendingCommissions: wallet ? wallet.pendingCommissions : 0,
+    fundBalance: wallet ? wallet.fundBalance : 0,
+    totalNetworkIncome: wallet ? wallet.totalNetworkIncome : 0,
+    eligibleInvestmentBase: wallet ? wallet.eligibleInvestmentBase : 0,
+    network3xCap: wallet ? roundToTwoDecimals((wallet.eligibleInvestmentBase || 0) * 3) : 0,
     totalDeposited: sumMap['DEPOSIT:COMPLETED'] || 0,
     totalInvested: sumMap['INVESTMENT:COMPLETED'] || 0,
     totalRoi: sumMap['ROI:COMPLETED'] || 0,
     totalCommission: sumMap['COMMISSION:COMPLETED'] || 0,
+    totalEarnings: wallet ? wallet.totalEarnings : 0,
   };
 
   const upline = user.referredBy
@@ -476,6 +489,8 @@ const updateSettings = asyncHandler(async (req, res) => {
     'profitShareTransferEnabled',
     'profitShareTransferDay',
     'profitShareDistributionMethod',
+    // Fund Wallet
+    'fundTransferEnabled',
   ];
   allowedScalars.forEach((key) => {
     if (body[key] !== undefined) settings[key] = body[key];

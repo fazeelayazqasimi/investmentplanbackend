@@ -31,6 +31,8 @@ const transactionSchema = new mongoose.Schema(
         'DIRECT_INCOME', 'LEVEL_INCOME',
         'ROI_TRANSFER', 'PROFIT_SHARE', 'PROFIT_SHARE_TRANSFER',
         'E_WALLET_USAGE',
+        'PENDING_ROI', 'PENDING_NETWORK_COMMISSION',
+        'FUND_TRANSFER_SENT', 'FUND_TRANSFER_RECEIVED',
       ],
       required: [true, 'Transaction type is required'],
       index: true,

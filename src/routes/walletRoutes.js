@@ -10,6 +10,7 @@ const {
   rejectDeposit,
   transferRoi,
   transferProfitShare,
+  transferFund,
 } = require('../controllers/walletController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
@@ -31,6 +32,9 @@ router.post('/transfer/roi', authenticate, transferRoi);
 
 // @route   POST /api/wallet/transfer/profit-share
 router.post('/transfer/profit-share', authenticate, transferProfitShare);
+
+// @route   POST /api/wallet/transfer/fund
+router.post('/transfer/fund', authenticate, transferFund);
 
 // ==========================================
 // ADMIN ROUTES (deposit approval workflow)

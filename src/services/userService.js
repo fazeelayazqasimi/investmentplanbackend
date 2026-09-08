@@ -56,9 +56,7 @@ const activateAccount = async (userId) => {
   }
 
   if (user.isActivated) {
-    const error = new Error('Account is already activated');
-    error.statusCode = 400;
-    throw error;
+    return { alreadyActivated: true, message: 'Your account is already activated' };
   }
 
   const result = await walletService.adjustWalletBalance({

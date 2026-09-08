@@ -50,6 +50,14 @@ const updateProfile = asyncHandler(async (req, res) => {
 const activateAccount = asyncHandler(async (req, res) => {
   const result = await userService.activateAccount(req.user.id);
 
+  if (result.alreadyActivated) {
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data: result,
+    });
+  }
+
   res.status(200).json({
     success: true,
     message: `Account activated successfully. $${result.fee} deducted from main wallet.`,

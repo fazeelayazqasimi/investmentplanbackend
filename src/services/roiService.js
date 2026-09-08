@@ -118,19 +118,27 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         maxReturnAmount - previousTotalReturned
       );
 
-      // Never exceed 2X — cap the ROI amount to whatever remains
+      // Phase 2: 2X cap enforcement with pending overflow
       let appliedRoiAmount = rawRoiAmount;
+      let pendingRoiAmount = 0;
       let status = 'SUCCESS';
 
-      if (rawRoiAmount >= remainingBeforeThisRoi) {
+      if (rawRoiAmount > remainingBeforeThisRoi && remainingBeforeThisRoi > 0) {
+        // Cap hit — credit what fits, overflow to pending
         appliedRoiAmount = remainingBeforeThisRoi;
+        pendingRoiAmount = roundToTwoDecimals(rawRoiAmount - remainingBeforeThisRoi);
+        status = 'CAPPED';
+      } else if (remainingBeforeThisRoi <= 0) {
+        // Already at 2X — entire amount goes to pending
+        appliedRoiAmount = 0;
+        pendingRoiAmount = rawRoiAmount;
         status = 'CAPPED';
       }
 
       appliedRoiAmount = roundToTwoDecimals(Math.max(0, appliedRoiAmount));
 
-      // If nothing remains to distribute, do not create a record at all
-      if (appliedRoiAmount <= 0) {
+      // If nothing to distribute at all (no ROI, no pending), skip
+      if (appliedRoiAmount <= 0 && pendingRoiAmount <= 0) {
         return;
       }
 
@@ -155,9 +163,7 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       await freshInvestment.save({ session });
 
-      // Create the ROI ledger record. The unique index on
-      // (investment, roiDate) guarantees this throws E11000 if a
-      // duplicate distribution is ever attempted for this date.
+      // Create the ROI ledger record
       const records = await ROIHistory.create(
         [
           {
@@ -181,21 +187,35 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       createdRecord = records[0];
 
-      // Credit the user's ROI wallet balance and create a matching
-      // Transaction record, within this SAME session — so investment
-      // update, ROI ledger, wallet balance, and transaction all commit
-      // or roll back together as one atomic unit.
-      await walletService.adjustWalletBalance({
-        userId: freshInvestment.user,
-        balanceField: 'roiBalance',
-        amount: appliedRoiAmount,
-        type: 'ROI',
-        investmentId: freshInvestment._id,
-        description: `ROI credit (${percentage}%) for investment on ${roiDate.toISOString().split('T')[0]}`,
-        reference: createdRecord._id.toString(),
-        createdBy: null, // system-generated
-        session,
-      });
+      // Credit the applied ROI to roiBalance (within 2X cap)
+      if (appliedRoiAmount > 0) {
+        await walletService.adjustWalletBalance({
+          userId: freshInvestment.user,
+          balanceField: 'roiBalance',
+          amount: appliedRoiAmount,
+          type: 'ROI',
+          investmentId: freshInvestment._id,
+          description: `ROI credit (${percentage}%) for investment on ${roiDate.toISOString().split('T')[0]}`,
+          reference: createdRecord._id.toString(),
+          createdBy: null,
+          session,
+        });
+      }
+
+      // Phase 2: Credit overflow ROI to pendingCommissions (beyond 2X cap)
+      if (pendingRoiAmount > 0) {
+        await walletService.adjustWalletBalance({
+          userId: freshInvestment.user,
+          balanceField: 'pendingCommissions',
+          amount: pendingRoiAmount,
+          type: 'PENDING_ROI',
+          investmentId: freshInvestment._id,
+          description: `Pending ROI (2X cap overflow) for investment on ${roiDate.toISOString().split('T')[0]} - $${pendingRoiAmount}`,
+          reference: createdRecord._id.toString(),
+          createdBy: null,
+          session,
+        });
+      }
     });
 
     return createdRecord;

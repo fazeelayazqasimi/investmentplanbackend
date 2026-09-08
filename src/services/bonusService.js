@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
@@ -90,10 +91,16 @@ const processRegistrationBonuses = async (userId, uplineId, session) => {
  * Credits direct income to a user's Main Wallet instantly.
  * Called when someone in the user's downline makes an investment.
  *
+ * Phase 2 changes:
+ * - Skips if recipient is not activated (isActivated === false)
+ * - Enforces 3X network income cap: cumulative Direct+Level income
+ *   cannot exceed 3× eligibleInvestmentBase
+ * - Overflow goes to pendingCommissions instead of mainBalance
+ *
  * @param {string} directUplineId - the direct upline who receives the income
  * @param {number} investmentAmount - the actual investment amount (after activation fee)
  * @param {import('mongoose').ClientSession} session - caller's MongoDB session
- * @returns {Promise<Object|null>} the created transaction, or null if no income
+ * @returns {Promise<Object|null>} { mainCredited, pendingCredited, transaction, pendingTransaction } or null
  */
 const creditDirectIncome = async (directUplineId, investmentAmount, session) => {
   const settings = await SystemSettings.getSettings();
@@ -109,18 +116,86 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session) => 
     return null;
   }
 
-  const result = await walletService.adjustWalletBalance({
-    userId: directUplineId,
-    balanceField: 'mainBalance',
-    amount: incomeAmount,
-    type: 'DIRECT_INCOME',
-    description: `Direct income (${percentage}%) from downline investment - $${incomeAmount}`,
-    reference: null,
-    createdBy: null,
-    session,
-  });
+  // Check activation status — inactive users get nothing
+  const upline = await User.findById(directUplineId).session(session);
+  if (!upline || !upline.isActivated) {
+    return null;
+  }
 
-  return result.transaction;
+  // Fetch wallet inside session for atomic cap check
+  let wallet = await Wallet.findOne({ user: directUplineId }).session(session);
+  if (!wallet) {
+    const created = await Wallet.create([{ user: directUplineId }], { session });
+    wallet = created[0];
+  }
+
+  // 3X network income cap enforcement
+  const currentNetworkIncome = wallet.totalNetworkIncome || 0;
+  const currentBase = wallet.eligibleInvestmentBase || 0;
+  const newBase = roundToTwoDecimals(currentBase + investmentAmount);
+  const cap = roundToTwoDecimals(newBase * 3);
+  const newTotalAfterCredit = roundToTwoDecimals(currentNetworkIncome + incomeAmount);
+
+  let mainCredited = 0;
+  let pendingCredited = 0;
+  let mainTransaction = null;
+  let pendingTransaction = null;
+
+  if (newTotalAfterCredit <= cap) {
+    // Under cap — full amount to main balance
+    mainCredited = incomeAmount;
+    const result = await walletService.adjustWalletBalance({
+      userId: directUplineId,
+      balanceField: 'mainBalance',
+      amount: incomeAmount,
+      type: 'DIRECT_INCOME',
+      description: `Direct income (${percentage}%) from downline investment - $${incomeAmount}`,
+      reference: null,
+      createdBy: null,
+      session,
+    });
+    mainTransaction = result.transaction;
+  } else {
+    // Over cap — split between main and pending
+    const allowedAmount = roundToTwoDecimals(Math.max(0, cap - currentNetworkIncome));
+    pendingCredited = roundToTwoDecimals(incomeAmount - allowedAmount);
+
+    if (allowedAmount > 0) {
+      mainCredited = allowedAmount;
+      const result = await walletService.adjustWalletBalance({
+        userId: directUplineId,
+        balanceField: 'mainBalance',
+        amount: allowedAmount,
+        type: 'DIRECT_INCOME',
+        description: `Direct income (${percentage}%) from downline investment - $${allowedAmount} (capped)`,
+        reference: null,
+        createdBy: null,
+        session,
+      });
+      mainTransaction = result.transaction;
+    }
+
+    if (pendingCredited > 0) {
+      const pendingResult = await walletService.adjustWalletBalance({
+        userId: directUplineId,
+        balanceField: 'pendingCommissions',
+        amount: pendingCredited,
+        type: 'PENDING_NETWORK_COMMISSION',
+        description: `Pending network commission (3X cap overflow) - $${pendingCredited}`,
+        reference: null,
+        createdBy: null,
+        session,
+      });
+      pendingTransaction = pendingResult.transaction;
+    }
+  }
+
+  // Update tracking fields atomically
+  wallet.totalNetworkIncome = roundToTwoDecimals(currentNetworkIncome + incomeAmount);
+  wallet.eligibleInvestmentBase = newBase;
+  await wallet.save({ session });
+
+  return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
 };
 
 /**
@@ -130,10 +205,15 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session) => 
  * Level 1 = Direct upline (gets direct income)
  * Level 2 = Indirect upline (gets level income)
  *
+ * Phase 2 changes:
+ * - Skips if recipient is not activated (isActivated === false)
+ * - Enforces 3X network income cap
+ * - Overflow goes to pendingCommissions
+ *
  * @param {string} level2UplineId - the level 2 upline who receives the income
  * @param {number} investmentAmount - the actual investment amount (after activation fee)
  * @param {import('mongoose').ClientSession} session - caller's MongoDB session
- * @returns {Promise<Object|null>} the created transaction, or null if no income
+ * @returns {Promise<Object|null>} { mainCredited, pendingCredited, transaction, pendingTransaction } or null
  */
 const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
   const settings = await SystemSettings.getSettings();
@@ -149,18 +229,86 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
     return null;
   }
 
-  const result = await walletService.adjustWalletBalance({
-    userId: level2UplineId,
-    balanceField: 'mainBalance',
-    amount: incomeAmount,
-    type: 'LEVEL_INCOME',
-    description: `Level income (${percentage}%) from indirect downline investment - $${incomeAmount}`,
-    reference: null,
-    createdBy: null,
-    session,
-  });
+  // Check activation status — inactive users get nothing
+  const upline = await User.findById(level2UplineId).session(session);
+  if (!upline || !upline.isActivated) {
+    return null;
+  }
 
-  return result.transaction;
+  // Fetch wallet inside session for atomic cap check
+  let wallet = await Wallet.findOne({ user: level2UplineId }).session(session);
+  if (!wallet) {
+    const created = await Wallet.create([{ user: level2UplineId }], { session });
+    wallet = created[0];
+  }
+
+  // 3X network income cap enforcement
+  const currentNetworkIncome = wallet.totalNetworkIncome || 0;
+  const currentBase = wallet.eligibleInvestmentBase || 0;
+  const newBase = roundToTwoDecimals(currentBase + investmentAmount);
+  const cap = roundToTwoDecimals(newBase * 3);
+  const newTotalAfterCredit = roundToTwoDecimals(currentNetworkIncome + incomeAmount);
+
+  let mainCredited = 0;
+  let pendingCredited = 0;
+  let mainTransaction = null;
+  let pendingTransaction = null;
+
+  if (newTotalAfterCredit <= cap) {
+    // Under cap — full amount to main balance
+    mainCredited = incomeAmount;
+    const result = await walletService.adjustWalletBalance({
+      userId: level2UplineId,
+      balanceField: 'mainBalance',
+      amount: incomeAmount,
+      type: 'LEVEL_INCOME',
+      description: `Level income (${percentage}%) from indirect downline investment - $${incomeAmount}`,
+      reference: null,
+      createdBy: null,
+      session,
+    });
+    mainTransaction = result.transaction;
+  } else {
+    // Over cap — split between main and pending
+    const allowedAmount = roundToTwoDecimals(Math.max(0, cap - currentNetworkIncome));
+    pendingCredited = roundToTwoDecimals(incomeAmount - allowedAmount);
+
+    if (allowedAmount > 0) {
+      mainCredited = allowedAmount;
+      const result = await walletService.adjustWalletBalance({
+        userId: level2UplineId,
+        balanceField: 'mainBalance',
+        amount: allowedAmount,
+        type: 'LEVEL_INCOME',
+        description: `Level income (${percentage}%) from indirect downline investment - $${allowedAmount} (capped)`,
+        reference: null,
+        createdBy: null,
+        session,
+      });
+      mainTransaction = result.transaction;
+    }
+
+    if (pendingCredited > 0) {
+      const pendingResult = await walletService.adjustWalletBalance({
+        userId: level2UplineId,
+        balanceField: 'pendingCommissions',
+        amount: pendingCredited,
+        type: 'PENDING_NETWORK_COMMISSION',
+        description: `Pending network commission (3X cap overflow) - $${pendingCredited}`,
+        reference: null,
+        createdBy: null,
+        session,
+      });
+      pendingTransaction = pendingResult.transaction;
+    }
+  }
+
+  // Update tracking fields atomically
+  wallet.totalNetworkIncome = roundToTwoDecimals(currentNetworkIncome + incomeAmount);
+  wallet.eligibleInvestmentBase = newBase;
+  await wallet.save({ session });
+
+  return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
 };
 
 /**

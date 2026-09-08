@@ -138,6 +138,14 @@ const systemSettingsSchema = new mongoose.Schema(
     },
 
     // ==========================================
+    // FUND WALLET SETTINGS
+    // ==========================================
+    fundTransferEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    // ==========================================
     // INVESTMENT PLANS CATALOG
     // (used by the user-facing plan selection UI)
     // ==========================================

@@ -38,7 +38,7 @@ const adjustWalletBalance = async ({
   createdBy = null,
   session: externalSession = null,
 }) => {
-  const validFields = ['mainBalance', 'roiBalance', 'commissionBalance', 'ewalletBalance', 'profitShareBalance'];
+  const validFields = ['mainBalance', 'roiBalance', 'commissionBalance', 'ewalletBalance', 'profitShareBalance', 'pendingCommissions', 'fundBalance'];
   if (!validFields.includes(balanceField)) {
     throw new Error(`Invalid wallet balance field: ${balanceField}`);
   }
@@ -475,6 +475,112 @@ const adminTriggerProfitShareTransfer = async () => {
   return { processed, totalAmount, errors };
 };
 
+// ==========================================
+// FUND WALLET TRANSFER - User to User
+// ==========================================
+const transferFundToUser = async (senderId, receiverId, amount) => {
+  const SystemSettings = require('../models/SystemSettings');
+  const User = require('../models/User');
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.fundTransferEnabled) {
+    const error = new Error('Fund Wallet transfers are currently disabled by admin');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const roundedAmount = roundToTwoDecimals(amount);
+  if (roundedAmount <= 0) {
+    const error = new Error('Transfer amount must be greater than zero');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (senderId === receiverId) {
+    const error = new Error('Cannot transfer to yourself');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const receiver = await User.findById(receiverId);
+  if (!receiver) {
+    const error = new Error('Receiver not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (receiver.accountStatus !== 'ACTIVE') {
+    const error = new Error('Receiver account is not active');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      const senderWallet = await Wallet.findOne({ user: senderId }).session(session);
+      if (!senderWallet) {
+        const error = new Error('Sender wallet not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (senderWallet.fundBalance < roundedAmount) {
+        const error = new Error('Insufficient Fund Wallet balance');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      senderWallet.fundBalance = roundToTwoDecimals(senderWallet.fundBalance - roundedAmount);
+      await senderWallet.save({ session });
+
+      let receiverWallet = await Wallet.findOne({ user: receiverId }).session(session);
+      if (!receiverWallet) {
+        const created = await Wallet.create([{ user: receiverId }], { session });
+        receiverWallet = created[0];
+      }
+      receiverWallet.fundBalance = roundToTwoDecimals(receiverWallet.fundBalance + roundedAmount);
+      await receiverWallet.save({ session });
+
+      const senderTx = await Transaction.create(
+        [{
+          user: senderId,
+          amount: -roundedAmount,
+          type: 'FUND_TRANSFER_SENT',
+          status: 'COMPLETED',
+          description: `Fund transfer sent to ${receiver.name} - $${roundedAmount}`,
+          reference: receiverId.toString(),
+          createdBy: senderId,
+        }],
+        { session }
+      );
+
+      const receiverTx = await Transaction.create(
+        [{
+          user: receiverId,
+          amount: roundedAmount,
+          type: 'FUND_TRANSFER_RECEIVED',
+          status: 'COMPLETED',
+          description: `Fund transfer received from user - $${roundedAmount}`,
+          reference: senderId.toString(),
+          createdBy: senderId,
+        }],
+        { session }
+      );
+
+      result = {
+        amount: roundedAmount,
+        senderTransaction: senderTx[0],
+        receiverTransaction: receiverTx[0],
+        senderBalance: senderWallet.fundBalance,
+        receiverBalance: receiverWallet.fundBalance,
+      };
+    });
+    return result;
+  } finally {
+    session.endSession();
+  }
+};
+
 module.exports = {
   adjustWalletBalance,
   getWallet,
@@ -487,4 +593,5 @@ module.exports = {
   transferProfitShareToMain,
   adminTriggerRoiTransfer,
   adminTriggerProfitShareTransfer,
+  transferFundToUser,
 };

@@ -142,6 +142,36 @@ const transferProfitShare = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Transfer Fund Wallet to another user
+// @route   POST /api/wallet/transfer/fund
+// @access  Private (User)
+// ==========================================
+const transferFund = asyncHandler(async (req, res) => {
+  const { receiverId, amount } = req.body;
+
+  if (!receiverId) {
+    res.status(400);
+    throw new Error('Receiver ID is required');
+  }
+  if (!amount || Number(amount) <= 0) {
+    res.status(400);
+    throw new Error('Transfer amount must be greater than zero');
+  }
+
+  const result = await walletService.transferFundToUser(
+    req.user.id,
+    receiverId,
+    Number(amount)
+  );
+
+  res.status(200).json({
+    success: true,
+    message: 'Fund transfer successful',
+    data: result,
+  });
+});
+
 module.exports = {
   getMyWallet,
   getMyTransactions,
@@ -151,4 +181,5 @@ module.exports = {
   rejectDeposit,
   transferRoi,
   transferProfitShare,
+  transferFund,
 };
