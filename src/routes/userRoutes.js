@@ -6,6 +6,8 @@ const {
   getMyUpline,
   getMyDownlines,
   getMyReferralTree,
+  getEnrichedReferralData,
+  getReferralStats,
 } = require('../controllers/referralController');
 const { authenticate } = require('../middleware/authMiddleware');
 
@@ -33,5 +35,11 @@ router.get('/downlines', authenticate, getMyDownlines);
 
 // @route   GET /api/users/tree
 router.get('/tree', authenticate, getMyReferralTree);
+
+// @route   GET /api/users/referrals/enriched
+router.get('/referrals/enriched', authenticate, getEnrichedReferralData);
+
+// @route   GET /api/users/referrals/stats
+router.get('/referrals/stats', authenticate, getReferralStats);
 
 module.exports = router;

@@ -55,8 +55,52 @@ const getMyReferralTree = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Get enriched referral data (stats, direct, indirect, tree)
+// @route   GET /api/users/referrals/enriched
+// @access  Private
+// ==========================================
+const getEnrichedReferralData = asyncHandler(async (req, res) => {
+  const [stats, directDownlines, indirectDownlines, tree] = await Promise.all([
+    referralService.getReferralStats(req.user.id),
+    referralService.getEnrichedDirectDownlines(req.user.id),
+    referralService.getEnrichedIndirectDownlines(req.user.id),
+    referralService.getEnrichedReferralTree(req.user.id),
+  ]);
+
+  res.status(200).json({
+    success: true,
+    message: 'Enriched referral data fetched successfully',
+    data: {
+      stats,
+      directDownlines,
+      indirectDownlines,
+      tree,
+    },
+  });
+});
+
+// ==========================================
+// @desc    Get enriched referral stats only
+// @route   GET /api/users/referrals/stats
+// @access  Private
+// ==========================================
+const getReferralStats = asyncHandler(async (req, res) => {
+  const stats = await referralService.getReferralStats(req.user.id);
+
+  res.status(200).json({
+    success: true,
+    message: 'Referral stats fetched successfully',
+    data: {
+      stats,
+    },
+  });
+});
+
 module.exports = {
   getMyUpline,
   getMyDownlines,
   getMyReferralTree,
+  getEnrichedReferralData,
+  getReferralStats,
 };

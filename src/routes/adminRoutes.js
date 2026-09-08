@@ -13,11 +13,23 @@ const {
   distributeProfitShare,
   triggerRoiTransfer,
   triggerProfitShareTransfer,
+  getAdminReferralStats,
+  searchAdminReferralMembers,
+  getAdminReferralTree,
+  getAdminReferralMemberDetail,
+  getAdminReferralMembers,
 } = require('../controllers/adminController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
 // All admin routes require authentication + admin role
 router.use(authenticate, authorizeAdmin);
+
+// Referral Network Management
+router.get('/referrals/stats', getAdminReferralStats);
+router.get('/referrals/search', searchAdminReferralMembers);
+router.get('/referrals/members', getAdminReferralMembers);
+router.get('/referrals/member/:userId', getAdminReferralMemberDetail);
+router.get('/referrals/tree/:userId', getAdminReferralTree);
 
 // Users
 router.get('/users', listUsers);
