@@ -3,7 +3,6 @@ const router = express.Router();
 
 const {
   createInvestment,
-  getPlans,
   getMyInvestments,
   getInvestmentDetails,
 } = require('../controllers/investmentController');
@@ -27,9 +26,6 @@ router.post(
   validateRequest,
   createInvestment
 );
-
-// @route   GET /api/investments/plans
-router.get('/plans', authenticate, getPlans);
 
 // @route   GET /api/investments
 router.get('/', authenticate, getMyInvestments);

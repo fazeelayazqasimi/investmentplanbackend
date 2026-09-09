@@ -109,7 +109,7 @@ const systemSettingsSchema = new mongoose.Schema(
     // ==========================================
     roiTransferEnabled: {
       type: Boolean,
-      default: false,
+      default: true,
     },
     roiTransferDay: {
       type: Number,
@@ -123,7 +123,7 @@ const systemSettingsSchema = new mongoose.Schema(
     // ==========================================
     profitShareTransferEnabled: {
       type: Boolean,
-      default: false,
+      default: true,
     },
     profitShareTransferDay: {
       type: Number,
@@ -145,26 +145,6 @@ const systemSettingsSchema = new mongoose.Schema(
       default: false,
     },
 
-    // ==========================================
-    // INVESTMENT PLANS CATALOG
-    // (used by the user-facing plan selection UI)
-    // ==========================================
-    plans: [
-      {
-        name: { type: String, required: true, trim: true },
-        roiPercentage: {
-          type: Number,
-          required: true,
-          min: [0, 'ROI percentage cannot be negative'],
-          max: [100, 'ROI percentage cannot exceed 100'],
-        },
-        durationDays: { type: Number, required: true, min: [1, 'Duration must be at least 1 day'] },
-        minAmount: { type: Number, default: 100, min: [0, 'Minimum amount cannot be negative'] },
-        maxAmount: { type: Number, default: 1000000, min: [0, 'Maximum amount cannot be negative'] },
-        description: { type: String, default: '', trim: true },
-        active: { type: Boolean, default: true },
-      },
-    ],
   },
   {
     timestamps: true,
@@ -173,8 +153,7 @@ const systemSettingsSchema = new mongoose.Schema(
 
 /**
  * Fetches the single settings document, creating it with defaults
- * if it doesn't exist yet (e.g. on first server run). Seeds a default
- * set of investment plans so the UI has something to display.
+ * if it doesn't exist yet (e.g. on first server run).
  *
  * @returns {Promise<Object>} the settings document
  */
@@ -184,35 +163,6 @@ systemSettingsSchema.statics.getSettings = async function () {
   if (!settings) {
     settings = await this.create({
       singletonKey: 'GLOBAL_SETTINGS',
-      plans: [
-        {
-          name: 'Starter Plan',
-          roiPercentage: 1,
-          durationDays: 30,
-          minAmount: 100,
-          maxAmount: 5000,
-          description: 'Entry-level plan with daily ROI accrual.',
-          active: true,
-        },
-        {
-          name: 'Growth Plan',
-          roiPercentage: 2,
-          durationDays: 60,
-          minAmount: 5000,
-          maxAmount: 50000,
-          description: 'Balanced plan for growing portfolios.',
-          active: true,
-        },
-        {
-          name: 'Premium Plan',
-          roiPercentage: 3,
-          durationDays: 90,
-          minAmount: 50000,
-          maxAmount: 500000,
-          description: 'High-yield plan for serious investors.',
-          active: true,
-        },
-      ],
     });
   }
 

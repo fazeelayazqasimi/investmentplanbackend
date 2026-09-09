@@ -11,6 +11,7 @@ const {
   transferRoi,
   transferProfitShare,
   transferFund,
+  getTransferSettings,
 } = require('../controllers/walletController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
@@ -20,6 +21,9 @@ const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware')
 
 // @route   GET /api/wallet
 router.get('/', authenticate, getMyWallet);
+
+// @route   GET /api/wallet/transfer-settings
+router.get('/transfer-settings', authenticate, getTransferSettings);
 
 // @route   GET /api/wallet/transactions
 router.get('/transactions', authenticate, getMyTransactions);

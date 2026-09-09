@@ -27,8 +27,6 @@ const roundToTwoDecimals = (value) => {
  * @param {string} params.createdByUserId - who is creating it (self or admin)
  * @param {string} params.createdByRole - 'USER' or 'ADMIN'
  * @param {number} params.amount
- * @param {string} [params.plan] - plan name (free text or matched to catalog)
- * @param {string} [params.planId] - ObjectId of a catalog plan
  * @param {string} [params.startDate]
  * @returns {Promise<Object>} the created investment
  */
@@ -37,8 +35,6 @@ const createInvestment = async ({
   createdByUserId,
   createdByRole,
   amount,
-  plan,
-  planId,
   startDate,
 }) => {
   const settings = await SystemSettings.getSettings();
@@ -53,28 +49,11 @@ const createInvestment = async ({
     throw error;
   }
 
-  // Resolve plan metadata (ROI % + duration) from the catalog when possible,
-  // falling back to the global overall ROI percentage for free-text plans.
-  let resolvedPlanName = plan || 'Custom';
-  let roiPercentage = settings.overallRoiPercentage || 0;
-  let durationDays = null;
-
-  if (settings.plans && settings.plans.length) {
-    const match =
-      (planId && settings.plans.find((p) => p._id && p._id.toString() === planId.toString())) ||
-      settings.plans.find((p) => p.name === plan);
-
-    if (match) {
-      resolvedPlanName = match.name;
-      roiPercentage = match.roiPercentage;
-      durationDays = match.durationDays;
-    }
-  }
+  // Use global ROI settings
+  const roiPercentage = settings.overallRoiPercentage || 0;
+  const durationDays = null;
 
   const computedStartDate = startDate ? new Date(startDate) : new Date();
-  const computedEndDate = durationDays
-    ? new Date(computedStartDate.getTime() + durationDays * 24 * 60 * 60 * 1000)
-    : null;
 
   const session = await mongoose.startSession();
 
@@ -102,12 +81,11 @@ const createInvestment = async ({
         throw error;
       }
 
-      // Create investment with full amount (activation is now a separate step)
+      // Create investment with full amount
       investment = await Investment.create(
         [
           {
             user: targetUserId,
-            plan: resolvedPlanName,
             originalAmount: roundedAmount,
             maxReturnAmount: roundToTwoDecimals(roundedAmount * 2),
             totalRoiEarned: 0,
@@ -117,7 +95,7 @@ const createInvestment = async ({
             roiPercentage,
             durationDays,
             startDate: computedStartDate,
-            endDate: computedEndDate,
+            endDate: null,
             createdBy: createdByUserId,
           },
         ],
@@ -131,7 +109,7 @@ const createInvestment = async ({
         amount: -roundedAmount,
         type: 'INVESTMENT',
         investmentId: investment[0]._id,
-        description: `Investment: ${resolvedPlanName}`,
+        description: `Investment: $${roundedAmount}`,
         createdBy: createdByUserId,
         session,
       });

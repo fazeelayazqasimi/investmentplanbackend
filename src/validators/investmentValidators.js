@@ -11,13 +11,6 @@ const createInvestmentValidationRules = [
     .isFloat({ gt: 0 })
     .withMessage('Investment amount must be a number greater than zero'),
 
-  body('plan')
-    .trim()
-    .notEmpty()
-    .withMessage('Investment plan/type is required')
-    .isLength({ max: 100 })
-    .withMessage('Plan name cannot exceed 100 characters'),
-
   body('startDate')
     .optional()
     .isISO8601()
@@ -45,12 +38,6 @@ const updateInvestmentValidationRules = [
     .optional()
     .isIn(['ACTIVE', 'COMPLETED', 'PAUSED', 'CANCELLED'])
     .withMessage('Invalid status value'),
-
-  body('plan')
-    .optional()
-    .trim()
-    .isLength({ min: 1, max: 100 })
-    .withMessage('Plan name must be between 1 and 100 characters'),
 
   body('startDate')
     .optional()

@@ -77,7 +77,7 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
   if (startMid && roiDate < startMid) return null;
   if (endMid && roiDate > endMid) return null;
 
-  // Prefer the investment's own (plan-based) ROI percentage. Fall back to the
+  // Prefer the investment's own ROI percentage. Fall back to the
   // global day-wise / overall setting when the investment has no explicit rate.
   const globalRoi = getApplicableRoiPercentage(settings, roiDate);
   const percentage = investment.roiPercentage && investment.roiPercentage > 0
@@ -304,7 +304,7 @@ const getUserRoiHistory = async (userId, { page = 1, limit = 20 } = {}) => {
       .sort({ roiDate: -1 })
       .skip(skip)
       .limit(limit)
-      .populate({ path: 'investment', select: 'plan originalAmount status' })
+      .populate({ path: 'investment', select: 'originalAmount status' })
       .lean(),
     ROIHistory.countDocuments({ user: userId }),
   ]);

@@ -148,7 +148,7 @@ const getUserTransactions = async (userId, { page = 1, limit = 20, type } = {}) 
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate({ path: 'investment', select: 'plan originalAmount' })
+      .populate({ path: 'investment', select: 'originalAmount' })
       .lean(),
     Transaction.countDocuments(query),
   ]);
@@ -298,14 +298,6 @@ const transferRoiToMain = async (userId, adminOverride = false) => {
     throw error;
   }
 
-  const today = new Date();
-  const currentDay = today.getUTCDate();
-  if (!adminOverride && currentDay !== settings.roiTransferDay) {
-    const error = new Error(`ROI transfer is only available on the ${settings.roiTransferDay}th of each month. Today is the ${currentDay}th.`);
-    error.statusCode = 400;
-    throw error;
-  }
-
   const session = await mongoose.startSession();
   try {
     let result;
@@ -358,14 +350,6 @@ const transferProfitShareToMain = async (userId, adminOverride = false) => {
 
   if (!settings.profitShareTransferEnabled && !adminOverride) {
     const error = new Error('Profit Share transfer is currently disabled by admin');
-    error.statusCode = 400;
-    throw error;
-  }
-
-  const today = new Date();
-  const currentDay = today.getUTCDate();
-  if (!adminOverride && currentDay !== settings.profitShareTransferDay) {
-    const error = new Error(`Profit Share transfer is only available on the ${settings.profitShareTransferDay}th of each month. Today is the ${currentDay}th.`);
     error.statusCode = 400;
     throw error;
   }

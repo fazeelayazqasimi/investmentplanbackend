@@ -1,6 +1,7 @@
 const asyncHandler = require('express-async-handler');
 const walletService = require('../services/walletService');
 const Transaction = require('../models/Transaction');
+const SystemSettings = require('../models/SystemSettings');
 
 // ==========================================
 // @desc    Get logged-in user's wallet balances
@@ -172,6 +173,24 @@ const transferFund = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Get transfer settings (ROI & Profit Share)
+// @route   GET /api/wallet/transfer-settings
+// @access  Private (User)
+// ==========================================
+const getTransferSettings = asyncHandler(async (req, res) => {
+  const settings = await SystemSettings.getSettings();
+
+  res.status(200).json({
+    success: true,
+    message: 'Transfer settings fetched successfully',
+    data: {
+      roiTransferEnabled: settings.roiTransferEnabled,
+      profitShareTransferEnabled: settings.profitShareTransferEnabled,
+    },
+  });
+});
+
 module.exports = {
   getMyWallet,
   getMyTransactions,
@@ -182,4 +201,5 @@ module.exports = {
   transferRoi,
   transferProfitShare,
   transferFund,
+  getTransferSettings,
 };

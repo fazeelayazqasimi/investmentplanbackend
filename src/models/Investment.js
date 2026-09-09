@@ -9,15 +9,6 @@ const investmentSchema = new mongoose.Schema(
       index: true,
     },
 
-    // Plan/type is a free-form label for now — no fixed plan catalog
-    // has been specified, so we keep this flexible rather than
-    // inventing a plans system.
-    plan: {
-      type: String,
-      required: [true, 'Investment plan/type is required'],
-      trim: true,
-    },
-
     originalAmount: {
       type: Number,
       required: [true, 'Original investment amount is required'],
@@ -62,7 +53,7 @@ const investmentSchema = new mongoose.Schema(
     },
 
     // ROI percentage applied to this investment (snapshot at creation time,
-    // sourced from the selected plan / system settings). Used for reporting.
+    // sourced from the global system settings). Used for reporting.
     roiPercentage: {
       type: Number,
       default: 0,

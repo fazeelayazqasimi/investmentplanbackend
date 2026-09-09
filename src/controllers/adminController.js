@@ -153,7 +153,7 @@ const getUserDetail = asyncHandler(async (req, res) => {
     Transaction.find({ user: userId, type: 'DEPOSIT' }).sort({ createdAt: -1 }).limit(50).lean(),
     Transaction.find({ user: userId }).sort({ createdAt: -1 }).limit(50).lean(),
     Investment.find({ user: userId }).sort({ createdAt: -1 }).lean({ virtuals: true }),
-    ROIHistory.find({ user: userId }).sort({ roiDate: -1 }).limit(50).populate({ path: 'investment', select: 'plan originalAmount' }).lean(),
+    ROIHistory.find({ user: userId }).sort({ roiDate: -1 }).limit(50).populate({ path: 'investment', select: 'originalAmount' }).lean(),
     User.find({ referredBy: userId }).select('name email accountStatus createdAt').lean(),
     Transaction.aggregate([
       { $match: { user: new mongoose.Types.ObjectId(userId) } },
@@ -234,7 +234,7 @@ const listInvestments = asyncHandler(async (req, res) => {
   if (status) match.status = status;
   if (search) {
     const re = new RegExp(search, 'i');
-    match.$or = [{ 'user.name': re }, { 'user.email': re }, { plan: re }];
+    match.$or = [{ 'user.name': re }, { 'user.email': re }];
   }
   pipeline.push({ $match: match });
 
@@ -501,10 +501,6 @@ const updateSettings = asyncHandler(async (req, res) => {
     days.forEach((d) => {
       if (body.dayWiseRoi[d] !== undefined) settings.dayWiseRoi[d] = body.dayWiseRoi[d];
     });
-  }
-
-  if (Array.isArray(body.plans)) {
-    settings.plans = body.plans;
   }
 
   settings.updatedBy = req.user.id;

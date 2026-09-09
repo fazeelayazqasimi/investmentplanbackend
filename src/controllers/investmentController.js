@@ -1,6 +1,5 @@
 const asyncHandler = require('express-async-handler');
 const investmentService = require('../services/investmentService');
-const SystemSettings = require('../models/SystemSettings');
 
 // ==========================================
 // @desc    Create a new investment (self-service)
@@ -8,15 +7,13 @@ const SystemSettings = require('../models/SystemSettings');
 // @access  Private (User)
 // ==========================================
 const createInvestment = asyncHandler(async (req, res) => {
-  const { amount, plan, planId, startDate } = req.body;
+  const { amount, startDate } = req.body;
 
   const investment = await investmentService.createInvestment({
     targetUserId: req.user.id,
     createdByUserId: req.user.id,
     createdByRole: req.user.role,
     amount,
-    plan,
-    planId,
     startDate,
   });
 
@@ -74,25 +71,8 @@ const getInvestmentDetails = asyncHandler(async (req, res) => {
   });
 });
 
-// ==========================================
-// @desc    Get active investment plans catalog (for user plan selection)
-// @route   GET /api/investments/plans
-// @access  Private (User)
-// ==========================================
-const getPlans = asyncHandler(async (req, res) => {
-  const settings = await SystemSettings.getSettings();
-  const plans = (settings.plans || []).filter((p) => p.active);
-
-  res.status(200).json({
-    success: true,
-    message: 'Plans fetched successfully',
-    data: { plans },
-  });
-});
-
 module.exports = {
   createInvestment,
-  getPlans,
   getMyInvestments,
   getInvestmentDetails,
 };
