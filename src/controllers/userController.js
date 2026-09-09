@@ -1,6 +1,7 @@
 const asyncHandler = require('express-async-handler');
 const userService = require('../services/userService');
 const SystemSettings = require('../models/SystemSettings');
+const Wallet = require('../models/Wallet');
 
 // ==========================================
 // @desc    Get logged-in user's profile
@@ -81,9 +82,56 @@ const getPublicConfig = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Get progress data for 2X and 3X milestones
+// @route   GET /api/users/progress
+// @access  Private (User)
+// ==========================================
+const getProgressData = asyncHandler(async (req, res) => {
+  const wallet = await Wallet.findOne({ user: req.user.id });
+
+  const totalInvestment = wallet ? (wallet.totalInvestmentAmount || 0) : 0;
+  const totalMaxReturn = wallet ? (wallet.totalMaxReturn || 0) : 0;
+  const totalReturned = wallet ? (wallet.totalReturned || 0) : 0;
+  const totalEarnings = wallet ? (wallet.totalEarnings || 0) : 0;
+  const eligibleBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
+  const networkIncome = wallet ? (wallet.totalNetworkIncome || 0) : 0;
+  const profitShareEarned = wallet ? (wallet.totalProfitShareEarned || 0) : 0;
+  const totalAllEarnings = Math.round((networkIncome + profitShareEarned) * 100) / 100;
+
+  // 2X Milestone: ROI cap (total investment * 2)
+  const milestone2x = totalMaxReturn;
+  const progress2x = totalReturned;
+  const remaining2x = Math.max(0, milestone2x - progress2x);
+  const percentage2x = milestone2x > 0 ? Math.min(100, Math.round((progress2x / milestone2x) * 100)) : 0;
+
+  // 3X Milestone: Total earnings cap (eligible base * 3)
+  const milestone3x = eligibleBase * 3;
+  const progress3x = totalAllEarnings;
+  const remaining3x = Math.max(0, milestone3x - progress3x);
+  const percentage3x = milestone3x > 0 ? Math.min(100, Math.round((progress3x / milestone3x) * 100)) : 0;
+
+  res.status(200).json({
+    success: true,
+    data: {
+      totalInvestment,
+      milestone2x,
+      progress2x,
+      remaining2x,
+      percentage2x,
+      milestone3x,
+      progress3x,
+      remaining3x,
+      percentage3x,
+      totalEarnings,
+    },
+  });
+});
+
 module.exports = {
   getProfile,
   updateProfile,
   activateAccount,
   getPublicConfig,
+  getProgressData,
 };

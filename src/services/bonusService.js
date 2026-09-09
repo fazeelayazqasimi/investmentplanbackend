@@ -315,6 +315,9 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
  * Distributes profit share from platform revenue to all active users.
  * Admin-triggered only. Each user's share goes to their Profit Share Wallet.
  *
+ * 3X CAP ENFORCEMENT: Total earnings (Direct + Level + Profit Share) cannot
+ * exceed 3x the user's eligible investment base. Overflow goes to pendingCommissions.
+ *
  * Distribution methods:
  * - EQUAL: total amount divided equally among all active users
  * - PROPORTIONAL: distributed based on each user's total investment amount
@@ -352,18 +355,73 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
 
         for (const user of activeUsers) {
           if (perUser > 0) {
-            await walletService.adjustWalletBalance({
-              userId: user._id,
-              balanceField: 'profitShareBalance',
-              amount: perUser,
-              type: 'PROFIT_SHARE',
-              description: `Profit share distribution (equal) - $${perUser}`,
-              reference: `dist_${Date.now()}`,
-              createdBy: adminId,
-              session,
-            });
-            distributed = roundToTwoDecimals(distributed + perUser);
-            userCount++;
+            // 3X CAP CHECK: Total earnings (Direct + Level + ProfitShare) cannot exceed 3x eligibleInvestmentBase
+            const wallet = await Wallet.findOne({ user: user._id }).session(session);
+            const eligibleBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
+            const currentNetworkIncome = wallet ? (wallet.totalNetworkIncome || 0) : 0;
+            const currentProfitShareEarned = wallet ? (wallet.totalProfitShareEarned || 0) : 0;
+            const totalCurrentEarnings = roundToTwoDecimals(currentNetworkIncome + currentProfitShareEarned);
+            const cap3x = roundToTwoDecimals(eligibleBase * 3);
+            const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - totalCurrentEarnings));
+
+            if (remaining3x <= 0) {
+              // Already at 3x cap - all goes to pendingCommissions
+              if (perUser > 0) {
+                await walletService.adjustWalletBalance({
+                  userId: user._id,
+                  balanceField: 'pendingCommissions',
+                  amount: perUser,
+                  type: 'PENDING_NETWORK_COMMISSION',
+                  description: `Pending profit share (3X cap overflow) - $${perUser}`,
+                  reference: `dist_${Date.now()}`,
+                  createdBy: adminId,
+                  session,
+                });
+                // Still track profit share earned even though it's pending
+                if (wallet) {
+                  wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + perUser);
+                  await wallet.save({ session });
+                }
+              }
+              continue;
+            }
+
+            const allowedAmount = roundToTwoDecimals(Math.min(perUser, remaining3x));
+            const pendingAmount = roundToTwoDecimals(perUser - allowedAmount);
+
+            if (allowedAmount > 0) {
+              await walletService.adjustWalletBalance({
+                userId: user._id,
+                balanceField: 'profitShareBalance',
+                amount: allowedAmount,
+                type: 'PROFIT_SHARE',
+                description: `Profit share distribution (equal) - $${allowedAmount}`,
+                reference: `dist_${Date.now()}`,
+                createdBy: adminId,
+                session,
+              });
+              distributed = roundToTwoDecimals(distributed + allowedAmount);
+              userCount++;
+            }
+
+            if (pendingAmount > 0) {
+              await walletService.adjustWalletBalance({
+                userId: user._id,
+                balanceField: 'pendingCommissions',
+                amount: pendingAmount,
+                type: 'PENDING_NETWORK_COMMISSION',
+                description: `Pending profit share (3X cap overflow) - $${pendingAmount}`,
+                reference: `dist_${Date.now()}`,
+                createdBy: adminId,
+                session,
+              });
+            }
+
+            // Track profit share earned (both allowed + pending)
+            if (wallet) {
+              wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + perUser);
+              await wallet.save({ session });
+            }
           }
         }
       } else {
@@ -392,18 +450,70 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
           if (userInvested > 0) {
             const share = roundToTwoDecimals((userInvested / totalInvested) * roundedTotal);
             if (share > 0) {
-              await walletService.adjustWalletBalance({
-                userId: user._id,
-                balanceField: 'profitShareBalance',
-                amount: share,
-                type: 'PROFIT_SHARE',
-                description: `Profit share distribution (proportional) - $${share}`,
-                reference: `dist_${Date.now()}`,
-                createdBy: adminId,
-                session,
-              });
-              distributed = roundToTwoDecimals(distributed + share);
-              userCount++;
+              // 3X CAP CHECK
+              const wallet = await Wallet.findOne({ user: user._id }).session(session);
+              const eligibleBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
+              const currentNetworkIncome = wallet ? (wallet.totalNetworkIncome || 0) : 0;
+              const currentProfitShareEarned = wallet ? (wallet.totalProfitShareEarned || 0) : 0;
+              const totalCurrentEarnings = roundToTwoDecimals(currentNetworkIncome + currentProfitShareEarned);
+              const cap3x = roundToTwoDecimals(eligibleBase * 3);
+              const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - totalCurrentEarnings));
+
+              if (remaining3x <= 0) {
+                if (share > 0) {
+                  await walletService.adjustWalletBalance({
+                    userId: user._id,
+                    balanceField: 'pendingCommissions',
+                    amount: share,
+                    type: 'PENDING_NETWORK_COMMISSION',
+                    description: `Pending profit share (3X cap overflow) - $${share}`,
+                    reference: `dist_${Date.now()}`,
+                    createdBy: adminId,
+                    session,
+                  });
+                  if (wallet) {
+                    wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + share);
+                    await wallet.save({ session });
+                  }
+                }
+                continue;
+              }
+
+              const allowedAmount = roundToTwoDecimals(Math.min(share, remaining3x));
+              const pendingAmount = roundToTwoDecimals(share - allowedAmount);
+
+              if (allowedAmount > 0) {
+                await walletService.adjustWalletBalance({
+                  userId: user._id,
+                  balanceField: 'profitShareBalance',
+                  amount: allowedAmount,
+                  type: 'PROFIT_SHARE',
+                  description: `Profit share distribution (proportional) - $${allowedAmount}`,
+                  reference: `dist_${Date.now()}`,
+                  createdBy: adminId,
+                  session,
+                });
+                distributed = roundToTwoDecimals(distributed + allowedAmount);
+                userCount++;
+              }
+
+              if (pendingAmount > 0) {
+                await walletService.adjustWalletBalance({
+                  userId: user._id,
+                  balanceField: 'pendingCommissions',
+                  amount: pendingAmount,
+                  type: 'PENDING_NETWORK_COMMISSION',
+                  description: `Pending profit share (3X cap overflow) - $${pendingAmount}`,
+                  reference: `dist_${Date.now()}`,
+                  createdBy: adminId,
+                  session,
+                });
+              }
+
+              if (wallet) {
+                wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + share);
+                await wallet.save({ session });
+              }
             }
           }
         }

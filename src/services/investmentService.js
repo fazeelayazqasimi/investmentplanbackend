@@ -114,6 +114,16 @@ const createInvestment = async ({
         session,
       });
 
+      // Update wallet total investment tracking for ROI 2X cap
+      let userWallet = await Wallet.findOne({ user: targetUserId }).session(session);
+      if (!userWallet) {
+        const created = await Wallet.create([{ user: targetUserId }], { session });
+        userWallet = created[0];
+      }
+      userWallet.totalInvestmentAmount = roundToTwoDecimals((userWallet.totalInvestmentAmount || 0) + roundedAmount);
+      userWallet.totalMaxReturn = roundToTwoDecimals(userWallet.totalInvestmentAmount * 2);
+      await userWallet.save({ session });
+
       // --- DIRECT & LEVEL INCOME ---
       // Income goes to the investor's uplines, NOT to the investor
       if (user && user.referredBy) {

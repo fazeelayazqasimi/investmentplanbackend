@@ -52,8 +52,8 @@ const walletSchema = new mongoose.Schema(
       min: [0, 'Fund balance cannot be negative'],
     },
 
-    // Cumulative network income (Direct + Level) earned by this user.
-    // Used for 3X network income cap enforcement.
+    // Cumulative network income (Direct + Level + ProfitShare) earned by this user.
+    // Used for 3X ALL-earnings cap enforcement.
     totalNetworkIncome: {
       type: Number,
       default: 0,
@@ -76,6 +76,42 @@ const walletSchema = new mongoose.Schema(
       type: Number,
       default: 0,
       min: [0, 'Total earnings cannot be negative'],
+    },
+
+    // Total amount invested by this user (sum of all investments).
+    // Used for ROI 2X cap and 3X earnings cap calculations.
+    totalInvestmentAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Maximum ROI return = totalInvestmentAmount * 2
+    totalMaxReturn: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Total ROI earned across all investments (for 2X cap tracking).
+    totalRoiEarned: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Total amount returned to user from ROI (for 2X cap tracking).
+    totalReturned: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // Total profit share earned (for 3X cap tracking).
+    totalProfitShareEarned: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
   },
   {

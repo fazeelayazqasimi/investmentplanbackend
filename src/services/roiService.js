@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Investment = require('../models/Investment');
+const Wallet = require('../models/Wallet');
 const ROIHistory = require('../models/ROIHistory');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
@@ -104,6 +105,18 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         return; // Completed/cancelled between initial fetch and now — abort safely
       }
 
+      // Fetch wallet for wallet-level 2X cap tracking (ROI on total investment)
+      let wallet = await Wallet.findOne({ user: freshInvestment.user }).session(session);
+      if (!wallet) {
+        const created = await Wallet.create([{ user: freshInvestment.user }], { session });
+        wallet = created[0];
+      }
+
+      // Use wallet-level tracking for 2X cap (total investment based)
+      const totalMaxReturn = wallet.totalMaxReturn || (freshInvestment.originalAmount * 2);
+      const totalRoiEarned = wallet.totalRoiEarned || 0;
+      const totalReturned = wallet.totalReturned || 0;
+
       const rawRoiAmount = roundToTwoDecimals(
         (freshInvestment.originalAmount * percentage) / 100
       );
@@ -112,13 +125,12 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         return;
       }
 
-      const previousTotalReturned = freshInvestment.totalReturned;
-      const maxReturnAmount = freshInvestment.maxReturnAmount;
+      const previousTotalReturned = totalReturned;
       const remainingBeforeThisRoi = roundToTwoDecimals(
-        maxReturnAmount - previousTotalReturned
+        totalMaxReturn - previousTotalReturned
       );
 
-      // Phase 2: 2X cap enforcement with pending overflow
+      // Phase 2: 2X cap enforcement with pending overflow (wallet-level)
       let appliedRoiAmount = rawRoiAmount;
       let pendingRoiAmount = 0;
       let status = 'SUCCESS';
@@ -146,15 +158,17 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         previousTotalReturned + appliedRoiAmount
       );
       const newRemainingReturn = roundToTwoDecimals(
-        Math.max(0, maxReturnAmount - newTotalReturned)
+        Math.max(0, totalMaxReturn - newTotalReturned)
       );
-      const isNowComplete = newTotalReturned >= maxReturnAmount;
+      const isNowComplete = newTotalReturned >= totalMaxReturn;
 
-      // Update the investment
+      // Update the investment record (for display/history purposes)
       freshInvestment.totalRoiEarned = roundToTwoDecimals(
         freshInvestment.totalRoiEarned + appliedRoiAmount
       );
-      freshInvestment.totalReturned = newTotalReturned;
+      freshInvestment.totalReturned = roundToTwoDecimals(
+        freshInvestment.totalReturned + appliedRoiAmount
+      );
 
       if (isNowComplete) {
         freshInvestment.status = 'COMPLETED';
@@ -162,6 +176,11 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
       }
 
       await freshInvestment.save({ session });
+
+      // Update wallet-level tracking (authoritative for 2X cap)
+      wallet.totalRoiEarned = roundToTwoDecimals((wallet.totalRoiEarned || 0) + appliedRoiAmount);
+      wallet.totalReturned = newTotalReturned;
+      await wallet.save({ session });
 
       // Create the ROI ledger record
       const records = await ROIHistory.create(

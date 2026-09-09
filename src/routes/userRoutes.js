@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { getProfile, updateProfile, activateAccount, getPublicConfig } = require('../controllers/userController');
+const { getProfile, updateProfile, activateAccount, getPublicConfig, getProgressData } = require('../controllers/userController');
 const {
   getMyUpline,
   getMyDownlines,
@@ -26,6 +26,9 @@ router.put('/profile', authenticate, updateProfile);
 
 // @route   POST /api/users/activate
 router.post('/activate', authenticate, activateAccount);
+
+// @route   GET /api/users/progress
+router.get('/progress', authenticate, getProgressData);
 
 // @route   GET /api/users/upline
 router.get('/upline', authenticate, getMyUpline);
