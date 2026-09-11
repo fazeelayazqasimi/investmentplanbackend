@@ -68,8 +68,9 @@ const adjustWalletBalance = async ({
 
     wallet[balanceField] = newBalance;
 
-    // Track cumulative lifetime earnings for all credit types
-    const creditTypes = ['ROI', 'COMMISSION', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE'];
+    // Track cumulative lifetime earnings for eligible credit types only.
+    // Excludes: SIGNUP_BONUS, UPLINE_SIGNUP_BONUS (free bonuses, not eligible earnings)
+    const creditTypes = ['ROI', 'COMMISSION', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE'];
     if (creditTypes.includes(type) && roundedAmount > 0) {
       wallet.totalEarnings = roundToTwoDecimals(wallet.totalEarnings + roundedAmount);
     }
@@ -342,6 +343,79 @@ const transferRoiToMain = async (userId, adminOverride = false) => {
 };
 
 // ==========================================
+// MAIN WALLET -> FUND WALLET TRANSFER
+// ==========================================
+const transferMainToFund = async (userId, amount) => {
+  const roundedAmount = roundToTwoDecimals(amount);
+
+  if (roundedAmount <= 0) {
+    const error = new Error('Transfer amount must be greater than zero');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      const wallet = await Wallet.findOne({ user: userId }).session(session);
+      if (!wallet) {
+        const error = new Error('Wallet not found');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      if (wallet.mainBalance < roundedAmount) {
+        const error = new Error('Insufficient Main Wallet balance');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      wallet.mainBalance = roundToTwoDecimals(wallet.mainBalance - roundedAmount);
+      wallet.fundBalance = roundToTwoDecimals(wallet.fundBalance + roundedAmount);
+      await wallet.save({ session });
+
+      const senderTx = await Transaction.create(
+        [{
+          user: userId,
+          amount: -roundedAmount,
+          type: 'MAIN_TO_FUND_TRANSFER',
+          status: 'COMPLETED',
+          description: `Transfer from Main Wallet to Fund Wallet - $${roundedAmount}`,
+          reference: null,
+          createdBy: null,
+        }],
+        { session }
+      );
+
+      const receiverTx = await Transaction.create(
+        [{
+          user: userId,
+          amount: roundedAmount,
+          type: 'MAIN_TO_FUND_TRANSFER',
+          status: 'COMPLETED',
+          description: `Received from Main Wallet - $${roundedAmount}`,
+          reference: null,
+          createdBy: null,
+        }],
+        { session }
+      );
+
+      result = {
+        amount: roundedAmount,
+        mainBalance: wallet.mainBalance,
+        fundBalance: wallet.fundBalance,
+        senderTransaction: senderTx[0],
+        receiverTransaction: receiverTx[0],
+      };
+    });
+    return result;
+  } finally {
+    session.endSession();
+  }
+};
+
+// ==========================================
 // PROFIT SHARE TRANSFER - Profit Share Wallet -> Main Wallet
 // ==========================================
 const transferProfitShareToMain = async (userId, adminOverride = false) => {
@@ -498,6 +572,19 @@ const transferFundToUser = async (senderId, receiverId, amount) => {
     throw error;
   }
 
+  // Verify receiver is in sender's downline tree
+  const referralService = require('./referralService');
+  const allDownlines = await referralService.getAllDownlines(senderId);
+  const receiverIdStr = receiverId.toString();
+  const isDownline = allDownlines.some(
+    (d) => d.user._id.toString() === receiverIdStr
+  );
+  if (!isDownline) {
+    const error = new Error('You can only transfer Fund Wallet balance to users in your downline');
+    error.statusCode = 400;
+    throw error;
+  }
+
   const session = await mongoose.startSession();
   try {
     let result;
@@ -574,6 +661,7 @@ module.exports = {
   rejectDeposit,
   roundToTwoDecimals,
   transferRoiToMain,
+  transferMainToFund,
   transferProfitShareToMain,
   adminTriggerRoiTransfer,
   adminTriggerProfitShareTransfer,

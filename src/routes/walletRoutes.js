@@ -9,6 +9,7 @@ const {
   approveDeposit,
   rejectDeposit,
   transferRoi,
+  transferMainToFund,
   transferProfitShare,
   transferFund,
   getTransferSettings,
@@ -33,6 +34,9 @@ router.post('/deposit', authenticate, requestDeposit);
 
 // @route   POST /api/wallet/transfer/roi
 router.post('/transfer/roi', authenticate, transferRoi);
+
+// @route   POST /api/wallet/transfer/main-to-fund
+router.post('/transfer/main-to-fund', authenticate, transferMainToFund);
 
 // @route   POST /api/wallet/transfer/profit-share
 router.post('/transfer/profit-share', authenticate, transferProfitShare);

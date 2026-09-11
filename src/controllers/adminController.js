@@ -477,6 +477,9 @@ const updateSettings = asyncHandler(async (req, res) => {
     'ewalletUsageEnabled',
     'signupBonusAmount',
     'uplineSignupBonusAmount',
+    // E-Wallet Downline Investment Offer
+    'ewalletDownlineOfferEnabled',
+    'ewalletMaxPercentage',
     // Activation
     'activationFee',
     // Income
@@ -491,6 +494,8 @@ const updateSettings = asyncHandler(async (req, res) => {
     'profitShareDistributionMethod',
     // Fund Wallet
     'fundTransferEnabled',
+    // Day-wise ROI
+    'roiDays',
   ];
   allowedScalars.forEach((key) => {
     if (body[key] !== undefined) settings[key] = body[key];
@@ -501,6 +506,13 @@ const updateSettings = asyncHandler(async (req, res) => {
     days.forEach((d) => {
       if (body.dayWiseRoi[d] !== undefined) settings.dayWiseRoi[d] = body.dayWiseRoi[d];
     });
+  }
+
+  if (body.dayWiseRoiSchedule && Array.isArray(body.dayWiseRoiSchedule)) {
+    settings.dayWiseRoiSchedule = body.dayWiseRoiSchedule.map(item => ({
+      day: Number(item.day),
+      percentage: Number(item.percentage),
+    }));
   }
 
   settings.updatedBy = req.user.id;
@@ -666,7 +678,8 @@ const searchAdminReferralMembers = asyncHandler(async (req, res) => {
     return res.status(200).json({ success: true, data: { users: [] } });
   }
 
-  const re = new RegExp(q.trim(), 'i');
+  const escaped = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(escaped, 'i');
   const users = await User.find({
     role: 'USER',
     $or: [{ name: re }, { email: re }, { referralCode: re }],

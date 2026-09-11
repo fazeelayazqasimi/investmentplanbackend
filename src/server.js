@@ -11,6 +11,7 @@ const PORT = process.env.PORT || 5000;
 // Handle uncaught synchronous exceptions
 process.on('uncaughtException', (err) => {
   console.error(`Uncaught Exception: ${err.message}`);
+  console.error(err.stack);
   process.exit(1);
 });
 
@@ -26,8 +27,9 @@ const startServer = async () => {
     });
 
     // Handle unhandled promise rejections (e.g. DB errors after connection)
-    process.on('unhandledRejection', (err) => {
-      console.error(`Unhandled Rejection: ${err.message}`);
+    process.on('unhandledRejection', (reason, promise) => {
+      console.error('Unhandled Rejection:', reason);
+      if (reason && reason.stack) console.error(reason.stack);
       server.close(() => process.exit(1));
     });
 

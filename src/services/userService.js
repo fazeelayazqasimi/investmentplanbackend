@@ -33,12 +33,13 @@ const getUserProfile = async (userId) => {
 
 /**
  * Activates a user's account by deducting the activation fee from their
- * main wallet balance. One-time only — subsequent calls are rejected.
+ * selected wallet. One-time only — subsequent calls are rejected.
  *
  * @param {string} userId
- * @returns {Promise<{ transaction: Object, fee: number }>}
+ * @param {string} walletSource - 'mainBalance' or 'fundBalance'
+ * @returns {Promise<{ transaction: Object, fee: number, walletSource: string }>}
  */
-const activateAccount = async (userId) => {
+const activateAccount = async (userId, walletSource = 'mainBalance') => {
   const settings = await SystemSettings.getSettings();
   const fee = roundToTwoDecimals(settings.activationFee || 0);
 
@@ -59,19 +60,39 @@ const activateAccount = async (userId) => {
     return { alreadyActivated: true, message: 'Your account is already activated' };
   }
 
+  // Validate wallet source
+  if (!['mainBalance', 'fundBalance'].includes(walletSource)) {
+    const error = new Error('Invalid wallet source. Use mainBalance or fundBalance');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Check balance in selected wallet
+  const Wallet = require('../models/Wallet');
+  const wallet = await Wallet.findOne({ user: userId });
+  const availableBalance = wallet ? wallet[walletSource] : 0;
+  if (availableBalance < fee) {
+    const walletName = walletSource === 'fundBalance' ? 'Fund Wallet' : 'Main Wallet';
+    const error = new Error(`Insufficient ${walletName} balance for activation fee ($${fee})`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const txType = walletSource === 'fundBalance' ? 'FUND_ACTIVATION' : 'ACTIVATION_FEE';
+
   const result = await walletService.adjustWalletBalance({
     userId,
-    balanceField: 'mainBalance',
+    balanceField: walletSource,
     amount: -fee,
-    type: 'ACTIVATION_FEE',
-    description: `One-time account activation fee - $${fee}`,
+    type: txType,
+    description: `One-time account activation fee - $${fee} (from ${walletSource === 'fundBalance' ? 'Fund Wallet' : 'Main Wallet'})`,
     createdBy: userId,
   });
 
   user.isActivated = true;
   await user.save();
 
-  return { transaction: result.transaction, fee };
+  return { transaction: result.transaction, fee, walletSource };
 };
 
 /**

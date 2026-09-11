@@ -71,8 +71,39 @@ const getInvestmentDetails = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Create investment for a downline using E-Wallet + Main Wallet
+// @route   POST /api/investments/downline
+// @access  Private (User)
+// ==========================================
+const createDownlineInvestment = asyncHandler(async (req, res) => {
+  const { receiverId, amount, ewalletAmount, startDate } = req.body;
+
+  if (!receiverId) {
+    res.status(400);
+    throw new Error('Receiver ID is required');
+  }
+
+  const investment = await investmentService.createDownlineInvestmentWithEwallet({
+    senderId: req.user.id,
+    receiverId,
+    amount,
+    ewalletAmount,
+    startDate,
+  });
+
+  res.status(201).json({
+    success: true,
+    message: 'Downline investment created successfully',
+    data: {
+      investment,
+    },
+  });
+});
+
 module.exports = {
   createInvestment,
   getMyInvestments,
   getInvestmentDetails,
+  createDownlineInvestment,
 };

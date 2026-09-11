@@ -32,16 +32,38 @@ const normalizeToMidnightUTC = (date) => {
 };
 
 /**
- * Determines the applicable ROI percentage based on current system
- * settings (DAY_WISE or OVERALL mode) for a given date.
+ * Calculates the day number for an investment (1-based).
+ * Day 1 = startDate, Day 2 = startDate + 1, etc.
+ */
+const getDayNumber = (startDate, forDate) => {
+  const start = normalizeToMidnightUTC(startDate);
+  const current = normalizeToMidnightUTC(forDate);
+  return Math.floor((current - start) / (1000 * 60 * 60 * 24)) + 1;
+};
+
+/**
+ * Determines the applicable ROI percentage based on system settings
+ * and investment-specific schedule.
  *
  * @param {Object} settings - SystemSettings document
  * @param {Date} forDate
- * @returns {{ percentage: number, dayName: string }}
+ * @param {Object} [investment] - Investment document (for day-wise schedule snapshot)
+ * @returns {{ percentage: number, dayName: string, dayNumber: number }}
  */
-const getApplicableRoiPercentage = (settings, forDate) => {
+const getApplicableRoiPercentage = (settings, forDate, investment = null) => {
   const dayName = DAY_NAMES[new Date(forDate).getUTCDay()];
 
+  // If investment has a day-wise schedule snapshot, use numbered days
+  if (investment && investment.roiMode === 'DAY_WISE' && investment.dayWiseRoiSchedule && investment.dayWiseRoiSchedule.length > 0) {
+    const dayNumber = getDayNumber(investment.startDate, forDate);
+    const entry = investment.dayWiseRoiSchedule.find(e => e.day === dayNumber);
+    if (entry) {
+      return { percentage: entry.percentage, dayName: `day_${dayNumber}`, dayNumber };
+    }
+    return { percentage: 0, dayName: `day_${dayNumber}`, dayNumber };
+  }
+
+  // Fallback: day-of-week for OVERALL mode or legacy investments without schedule
   if (settings.roiMode === 'DAY_WISE') {
     const percentage = settings.dayWiseRoi[dayName] || 0;
     return { percentage, dayName };
@@ -78,12 +100,9 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
   if (startMid && roiDate < startMid) return null;
   if (endMid && roiDate > endMid) return null;
 
-  // Prefer the investment's own ROI percentage. Fall back to the
-  // global day-wise / overall setting when the investment has no explicit rate.
-  const globalRoi = getApplicableRoiPercentage(settings, roiDate);
-  const percentage = investment.roiPercentage && investment.roiPercentage > 0
-    ? investment.roiPercentage
-    : globalRoi.percentage;
+  // Get ROI percentage using investment's snapshot schedule if available
+  const globalRoi = getApplicableRoiPercentage(settings, roiDate, investment);
+  const percentage = globalRoi.percentage;
   const dayName = globalRoi.dayName;
 
   // No ROI configured for this day/mode — nothing to do
@@ -105,17 +124,16 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         return; // Completed/cancelled between initial fetch and now — abort safely
       }
 
-      // Fetch wallet for wallet-level 2X cap tracking (ROI on total investment)
+      // Fetch wallet for display tracking and 3X cap
       let wallet = await Wallet.findOne({ user: freshInvestment.user }).session(session);
       if (!wallet) {
         const created = await Wallet.create([{ user: freshInvestment.user }], { session });
         wallet = created[0];
       }
 
-      // Use wallet-level tracking for 2X cap (total investment based)
-      const totalMaxReturn = wallet.totalMaxReturn || (freshInvestment.originalAmount * 2);
-      const totalRoiEarned = wallet.totalRoiEarned || 0;
-      const totalReturned = wallet.totalReturned || 0;
+      // Per-investment 2X cap (NOT wallet-level)
+      const totalMaxReturn = freshInvestment.maxReturnAmount; // already = originalAmount * 2
+      const totalReturned = freshInvestment.totalReturned || 0;
 
       const rawRoiAmount = roundToTwoDecimals(
         (freshInvestment.originalAmount * percentage) / 100
@@ -177,9 +195,10 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       await freshInvestment.save({ session });
 
-      // Update wallet-level tracking (authoritative for 2X cap)
+      // Update wallet-level tracking (display purposes and 3X cap)
       wallet.totalRoiEarned = roundToTwoDecimals((wallet.totalRoiEarned || 0) + appliedRoiAmount);
-      wallet.totalReturned = newTotalReturned;
+      wallet.totalReturned = roundToTwoDecimals((wallet.totalReturned || 0) + appliedRoiAmount);
+      wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + appliedRoiAmount);
       await wallet.save({ session });
 
       // Create the ROI ledger record

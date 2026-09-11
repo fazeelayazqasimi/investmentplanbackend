@@ -49,7 +49,8 @@ const updateProfile = asyncHandler(async (req, res) => {
 // @access  Private
 // ==========================================
 const activateAccount = asyncHandler(async (req, res) => {
-  const result = await userService.activateAccount(req.user.id);
+  const { walletSource } = req.body;
+  const result = await userService.activateAccount(req.user.id, walletSource || 'mainBalance');
 
   if (result.alreadyActivated) {
     return res.status(200).json({
@@ -59,9 +60,10 @@ const activateAccount = asyncHandler(async (req, res) => {
     });
   }
 
+  const walletName = result.walletSource === 'fundBalance' ? 'Fund Wallet' : 'Main Wallet';
   res.status(200).json({
     success: true,
-    message: `Account activated successfully. $${result.fee} deducted from main wallet.`,
+    message: `Account activated successfully. $${result.fee} deducted from ${walletName}.`,
     data: result,
   });
 });

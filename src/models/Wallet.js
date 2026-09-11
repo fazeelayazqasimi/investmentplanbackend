@@ -113,6 +113,15 @@ const walletSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    // Unified eligible earnings for overall 3X cap.
+    // Counts: ROI + Direct + Level + ProfitShare
+    // Excludes: Signup Bonus, Upline Bonus, E-Wallet, Activation Fee, Fund transfers
+    totalEligibleEarnings: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,

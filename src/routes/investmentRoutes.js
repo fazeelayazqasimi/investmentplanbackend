@@ -5,6 +5,7 @@ const {
   createInvestment,
   getMyInvestments,
   getInvestmentDetails,
+  createDownlineInvestment,
 } = require('../controllers/investmentController');
 const { getInvestmentRoiHistory } = require('../controllers/roiController');
 const {
@@ -26,6 +27,9 @@ router.post(
   validateRequest,
   createInvestment
 );
+
+// @route   POST /api/investments/downline
+router.post('/downline', authenticate, createDownlineInvestment);
 
 // @route   GET /api/investments
 router.get('/', authenticate, getMyInvestments);

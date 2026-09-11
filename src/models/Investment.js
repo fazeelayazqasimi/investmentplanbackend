@@ -61,6 +61,13 @@ const investmentSchema = new mongoose.Schema(
       max: [100, 'ROI percentage cannot exceed 100'],
     },
 
+    // Snapshot of day-wise ROI schedule when this investment was created.
+    // Preserves historical accuracy even if admin changes the plan later.
+    dayWiseRoiSchedule: [{
+      day: { type: Number },
+      percentage: { type: Number },
+    }],
+
     // Plan duration in days (snapshot at creation time). Used to compute endDate.
     durationDays: {
       type: Number,

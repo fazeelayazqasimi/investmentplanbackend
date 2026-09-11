@@ -145,6 +145,34 @@ const systemSettingsSchema = new mongoose.Schema(
       default: false,
     },
 
+    // ==========================================
+    // E-WALLET DOWNLINE INVESTMENT OFFER
+    // ==========================================
+    ewalletDownlineOfferEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    ewalletMaxPercentage: {
+      type: Number,
+      default: 0,
+      min: [0, 'Percentage cannot be negative'],
+      max: [100, 'Percentage cannot exceed 100'],
+    },
+
+    // ==========================================
+    // DAY-WISE ROI SCHEDULE (numbered investment days)
+    // ==========================================
+    roiDays: {
+      type: Number,
+      default: 0,
+      min: [0, 'ROI days cannot be negative'],
+      max: [365, 'ROI days cannot exceed 365'],
+    },
+    dayWiseRoiSchedule: [{
+      day: { type: Number },
+      percentage: { type: Number, default: 0, min: 0, max: 100 },
+    }],
+
   },
   {
     timestamps: true,

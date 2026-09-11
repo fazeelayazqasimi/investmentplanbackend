@@ -33,6 +33,8 @@ const transactionSchema = new mongoose.Schema(
         'E_WALLET_USAGE',
         'PENDING_ROI', 'PENDING_NETWORK_COMMISSION',
         'FUND_TRANSFER_SENT', 'FUND_TRANSFER_RECEIVED',
+        'MAIN_TO_FUND_TRANSFER', 'FUND_ACTIVATION',
+        'E_WALLET_DOWNLINE_INVESTMENT', 'PENDING_PROFIT_SHARE',
       ],
       required: [true, 'Transaction type is required'],
       index: true,

@@ -4,6 +4,7 @@ const Wallet = require('../models/Wallet');
 const User = require('../models/User');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
+const bonusService = require('./bonusService');
 
 /**
  * Rounds a number to 2 decimal places safely, avoiding common
@@ -93,6 +94,7 @@ const createInvestment = async ({
             status: 'ACTIVE',
             roiMode: settings.roiMode,
             roiPercentage,
+            dayWiseRoiSchedule: settings.roiMode === 'DAY_WISE' ? settings.dayWiseRoiSchedule : [],
             durationDays,
             startDate: computedStartDate,
             endDate: null,
@@ -128,7 +130,6 @@ const createInvestment = async ({
       // Income goes to the investor's uplines, NOT to the investor
       if (user && user.referredBy) {
         // Direct income -> direct upline (Level 1)
-        const bonusService = require('./bonusService');
         await bonusService.creditDirectIncome(
           user.referredBy,
           roundedAmount,
@@ -220,9 +221,194 @@ const getInvestmentById = async (investmentId, userId, bypassOwnershipCheck = fa
   return investment;
 };
 
+/**
+ * Creates an investment for a downline user using the sender's E-Wallet
+ * (and optionally Main Wallet) for payment.
+ *
+ * Rules:
+ * - E-Wallet offer must be enabled by admin
+ * - Receiver must be in sender's downline tree
+ * - E-Wallet contribution cannot exceed admin-set percentage
+ * - Sender must have sufficient balances
+ * - Investment amount is the FULL amount (not reduced by E-Wallet)
+ *
+ * @param {Object} params
+ * @param {string} params.senderId - the user paying
+ * @param {string} params.receiverId - the downline user receiving the investment
+ * @param {number} params.amount - total investment amount
+ * @param {number} params.ewalletAmount - portion paid from sender's E-Wallet
+ * @param {string} [params.startDate]
+ * @returns {Promise<Object>} the created investment
+ */
+const createDownlineInvestmentWithEwallet = async ({
+  senderId,
+  receiverId,
+  amount,
+  ewalletAmount,
+  startDate,
+}) => {
+  const settings = await SystemSettings.getSettings();
+  const roundedAmount = roundToTwoDecimals(amount);
+  const roundedEwallet = roundToTwoDecimals(ewalletAmount || 0);
+
+  if (roundedAmount <= 0) {
+    const error = new Error('Investment amount must be greater than zero');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (roundedEwallet < 0) {
+    const error = new Error('E-Wallet amount cannot be negative');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Verify E-Wallet offer is enabled
+  if (!settings.ewalletDownlineOfferEnabled) {
+    const error = new Error('E-Wallet downline investment offer is currently disabled');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Verify downline relationship
+  const referralService = require('./referralService');
+  const allDownlines = await referralService.getAllDownlines(senderId);
+  const isDownline = allDownlines.some(d => d.user._id.toString() === receiverId);
+  if (!isDownline || senderId === receiverId) {
+    const error = new Error('You can only invest for users in your downline');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Verify E-Wallet percentage limit
+  const maxEwalletAllowed = roundToTwoDecimals((roundedAmount * settings.ewalletMaxPercentage) / 100);
+  if (roundedEwallet > maxEwalletAllowed) {
+    const error = new Error(`E-Wallet contribution cannot exceed ${settings.ewalletMaxPercentage}% of investment ($${maxEwalletAllowed})`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const mainWalletNeeded = roundToTwoDecimals(roundedAmount - roundedEwallet);
+
+  // Check receiver is activated
+  const receiver = await User.findById(receiverId);
+  if (!receiver || !receiver.isActivated) {
+    const error = new Error('Receiver account must be activated before investing');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    let investment;
+    await session.withTransaction(async () => {
+      // Verify sender balances inside transaction
+      const senderWallet = await Wallet.findOne({ user: senderId }).session(session);
+      if (!senderWallet) {
+        const error = new Error('Sender wallet not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (roundedEwallet > 0 && senderWallet.ewalletBalance < roundedEwallet) {
+        const error = new Error('Insufficient E-Wallet balance');
+        error.statusCode = 400;
+        throw error;
+      }
+      if (mainWalletNeeded > 0 && senderWallet.mainBalance < mainWalletNeeded) {
+        const error = new Error('Insufficient Main Wallet balance');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const computedStartDate = startDate ? new Date(startDate) : new Date();
+
+      // Create investment for receiver
+      investment = await Investment.create(
+        [
+          {
+            user: receiverId,
+            originalAmount: roundedAmount,
+            maxReturnAmount: roundToTwoDecimals(roundedAmount * 2),
+            totalRoiEarned: 0,
+            totalReturned: 0,
+            status: 'ACTIVE',
+            roiMode: settings.roiMode,
+            roiPercentage: settings.overallRoiPercentage || 0,
+            dayWiseRoiSchedule: settings.roiMode === 'DAY_WISE' ? settings.dayWiseRoiSchedule : [],
+            durationDays: null,
+            startDate: computedStartDate,
+            endDate: null,
+            createdBy: senderId,
+          },
+        ],
+        { session }
+      );
+
+      // Debit E-Wallet from sender
+      if (roundedEwallet > 0) {
+        await walletService.adjustWalletBalance({
+          userId: senderId,
+          balanceField: 'ewalletBalance',
+          amount: -roundedEwallet,
+          type: 'E_WALLET_DOWNLINE_INVESTMENT',
+          investmentId: investment[0]._id,
+          description: `E-Wallet contribution for downline investment - $${roundedEwallet}`,
+          createdBy: senderId,
+          session,
+        });
+      }
+
+      // Debit Main Wallet from sender
+      if (mainWalletNeeded > 0) {
+        await walletService.adjustWalletBalance({
+          userId: senderId,
+          balanceField: 'mainBalance',
+          amount: -mainWalletNeeded,
+          type: 'INVESTMENT',
+          investmentId: investment[0]._id,
+          description: `Investment for downline - $${mainWalletNeeded}`,
+          createdBy: senderId,
+          session,
+        });
+      }
+
+      // Update receiver wallet tracking
+      let receiverWallet = await Wallet.findOne({ user: receiverId }).session(session);
+      if (!receiverWallet) {
+        const created = await Wallet.create([{ user: receiverId }], { session });
+        receiverWallet = created[0];
+      }
+      receiverWallet.totalInvestmentAmount = roundToTwoDecimals((receiverWallet.totalInvestmentAmount || 0) + roundedAmount);
+      receiverWallet.totalMaxReturn = roundToTwoDecimals(receiverWallet.totalInvestmentAmount * 2);
+      await receiverWallet.save({ session });
+
+      // Direct & Level income for receiver's uplines
+      if (receiver.referredBy) {
+        await bonusService.creditDirectIncome(
+          receiver.referredBy,
+          roundedAmount,
+          session
+        );
+        const directUpline = await User.findById(receiver.referredBy).session(session);
+        if (directUpline && directUpline.referredBy) {
+          await bonusService.creditLevelIncome(
+            directUpline.referredBy,
+            roundedAmount,
+            session
+          );
+        }
+      }
+    });
+
+    return investment[0];
+  } finally {
+    session.endSession();
+  }
+};
+
 module.exports = {
   createInvestment,
   getUserInvestments,
   getInvestmentById,
+  createDownlineInvestmentWithEwallet,
   roundToTwoDecimals,
 };

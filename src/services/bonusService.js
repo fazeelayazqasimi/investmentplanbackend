@@ -129,19 +129,19 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session) => 
     wallet = created[0];
   }
 
-  // 3X network income cap enforcement
-  const currentNetworkIncome = wallet.totalNetworkIncome || 0;
+  // Unified 3X earnings cap enforcement
+  const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
   const currentBase = wallet.eligibleInvestmentBase || 0;
   const newBase = roundToTwoDecimals(currentBase + investmentAmount);
-  const cap = roundToTwoDecimals(newBase * 3);
-  const newTotalAfterCredit = roundToTwoDecimals(currentNetworkIncome + incomeAmount);
+  const cap3x = roundToTwoDecimals(newBase * 3);
+  const newTotalAfterCredit = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
 
   let mainCredited = 0;
   let pendingCredited = 0;
   let mainTransaction = null;
   let pendingTransaction = null;
 
-  if (newTotalAfterCredit <= cap) {
+  if (newTotalAfterCredit <= cap3x) {
     // Under cap — full amount to main balance
     mainCredited = incomeAmount;
     const result = await walletService.adjustWalletBalance({
@@ -157,7 +157,7 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session) => 
     mainTransaction = result.transaction;
   } else {
     // Over cap — split between main and pending
-    const allowedAmount = roundToTwoDecimals(Math.max(0, cap - currentNetworkIncome));
+    const allowedAmount = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
     pendingCredited = roundToTwoDecimals(incomeAmount - allowedAmount);
 
     if (allowedAmount > 0) {
@@ -191,7 +191,7 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session) => 
   }
 
   // Update tracking fields atomically
-  wallet.totalNetworkIncome = roundToTwoDecimals(currentNetworkIncome + incomeAmount);
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
   wallet.eligibleInvestmentBase = newBase;
   await wallet.save({ session });
 
@@ -242,19 +242,19 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
     wallet = created[0];
   }
 
-  // 3X network income cap enforcement
-  const currentNetworkIncome = wallet.totalNetworkIncome || 0;
+  // Unified 3X earnings cap enforcement
+  const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
   const currentBase = wallet.eligibleInvestmentBase || 0;
   const newBase = roundToTwoDecimals(currentBase + investmentAmount);
-  const cap = roundToTwoDecimals(newBase * 3);
-  const newTotalAfterCredit = roundToTwoDecimals(currentNetworkIncome + incomeAmount);
+  const cap3x = roundToTwoDecimals(newBase * 3);
+  const newTotalAfterCredit = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
 
   let mainCredited = 0;
   let pendingCredited = 0;
   let mainTransaction = null;
   let pendingTransaction = null;
 
-  if (newTotalAfterCredit <= cap) {
+  if (newTotalAfterCredit <= cap3x) {
     // Under cap — full amount to main balance
     mainCredited = incomeAmount;
     const result = await walletService.adjustWalletBalance({
@@ -270,7 +270,7 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
     mainTransaction = result.transaction;
   } else {
     // Over cap — split between main and pending
-    const allowedAmount = roundToTwoDecimals(Math.max(0, cap - currentNetworkIncome));
+    const allowedAmount = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
     pendingCredited = roundToTwoDecimals(incomeAmount - allowedAmount);
 
     if (allowedAmount > 0) {
@@ -304,7 +304,7 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
   }
 
   // Update tracking fields atomically
-  wallet.totalNetworkIncome = roundToTwoDecimals(currentNetworkIncome + incomeAmount);
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
   wallet.eligibleInvestmentBase = newBase;
   await wallet.save({ session });
 
@@ -355,14 +355,12 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
 
         for (const user of activeUsers) {
           if (perUser > 0) {
-            // 3X CAP CHECK: Total earnings (Direct + Level + ProfitShare) cannot exceed 3x eligibleInvestmentBase
+            // Unified 3X CAP CHECK: Total eligible earnings cannot exceed 3x eligibleInvestmentBase
             const wallet = await Wallet.findOne({ user: user._id }).session(session);
             const eligibleBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
-            const currentNetworkIncome = wallet ? (wallet.totalNetworkIncome || 0) : 0;
-            const currentProfitShareEarned = wallet ? (wallet.totalProfitShareEarned || 0) : 0;
-            const totalCurrentEarnings = roundToTwoDecimals(currentNetworkIncome + currentProfitShareEarned);
+            const currentEligibleEarnings = wallet ? (wallet.totalEligibleEarnings || 0) : 0;
             const cap3x = roundToTwoDecimals(eligibleBase * 3);
-            const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - totalCurrentEarnings));
+            const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
 
             if (remaining3x <= 0) {
               // Already at 3x cap - all goes to pendingCommissions
@@ -379,6 +377,7 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
                 });
                 // Still track profit share earned even though it's pending
                 if (wallet) {
+                  wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + perUser);
                   wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + perUser);
                   await wallet.save({ session });
                 }
@@ -417,8 +416,9 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
               });
             }
 
-            // Track profit share earned (both allowed + pending)
+            // Track eligible earnings (both allowed + pending)
             if (wallet) {
+              wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + perUser);
               wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + perUser);
               await wallet.save({ session });
             }
@@ -450,14 +450,12 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
           if (userInvested > 0) {
             const share = roundToTwoDecimals((userInvested / totalInvested) * roundedTotal);
             if (share > 0) {
-              // 3X CAP CHECK
+              // Unified 3X CAP CHECK
               const wallet = await Wallet.findOne({ user: user._id }).session(session);
               const eligibleBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
-              const currentNetworkIncome = wallet ? (wallet.totalNetworkIncome || 0) : 0;
-              const currentProfitShareEarned = wallet ? (wallet.totalProfitShareEarned || 0) : 0;
-              const totalCurrentEarnings = roundToTwoDecimals(currentNetworkIncome + currentProfitShareEarned);
+              const currentEligibleEarnings = wallet ? (wallet.totalEligibleEarnings || 0) : 0;
               const cap3x = roundToTwoDecimals(eligibleBase * 3);
-              const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - totalCurrentEarnings));
+              const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
 
               if (remaining3x <= 0) {
                 if (share > 0) {
@@ -472,6 +470,7 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
                     session,
                   });
                   if (wallet) {
+                    wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + share);
                     wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + share);
                     await wallet.save({ session });
                   }
@@ -511,6 +510,7 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
               }
 
               if (wallet) {
+                wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + share);
                 wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + share);
                 await wallet.save({ session });
               }
