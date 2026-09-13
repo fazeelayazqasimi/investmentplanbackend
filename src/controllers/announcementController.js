@@ -18,7 +18,7 @@ exports.createAnnouncement = async (req, res) => {
       showBanner: showBanner !== false,
       showModal: showModal || false,
       expiresAt: expiresAt || null,
-      createdBy: req.user._id,
+      createdBy: req.user.id,
     });
 
     res.status(201).json({ announcement });
