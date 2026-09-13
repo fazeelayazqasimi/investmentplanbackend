@@ -53,14 +53,16 @@ const getDayNumber = (startDate, forDate) => {
 const getApplicableRoiPercentage = (settings, forDate, investment = null) => {
   const dayName = DAY_NAMES[new Date(forDate).getUTCDay()];
 
-  // If investment has a day-wise schedule snapshot, use numbered days
+  // If investment has a day-wise schedule snapshot, use numbered days with cycling
   if (investment && investment.roiMode === 'DAY_WISE' && investment.dayWiseRoiSchedule && investment.dayWiseRoiSchedule.length > 0) {
     const dayNumber = getDayNumber(investment.startDate, forDate);
-    const entry = investment.dayWiseRoiSchedule.find(e => e.day === dayNumber);
+    const cycleLength = investment.dayWiseRoiSchedule.length;
+    const effectiveDay = cycleLength > 0 ? ((dayNumber - 1) % cycleLength) + 1 : dayNumber;
+    const entry = investment.dayWiseRoiSchedule.find(e => e.day === effectiveDay);
     if (entry) {
-      return { percentage: entry.percentage, dayName: `day_${dayNumber}`, dayNumber };
+      return { percentage: entry.percentage, dayName: `day_${effectiveDay}`, dayNumber: effectiveDay, cycleDay: dayNumber };
     }
-    return { percentage: 0, dayName: `day_${dayNumber}`, dayNumber };
+    return { percentage: 0, dayName: `day_${effectiveDay}`, dayNumber: effectiveDay, cycleDay: dayNumber };
   }
 
   // Fallback: day-of-week for OVERALL mode or legacy investments without schedule

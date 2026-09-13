@@ -94,6 +94,7 @@ app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/investments', require('./routes/investmentRoutes'));
 app.use('/api/roi', require('./routes/roiRoutes'));
 app.use('/api/wallet', require('./routes/walletRoutes'));
+app.use('/api/bank-accounts', require('./routes/bankAccountRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 
 // ==========================================

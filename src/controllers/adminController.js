@@ -531,7 +531,9 @@ const updateSettings = asyncHandler(async (req, res) => {
 // @access  Private (Admin)
 // ==========================================
 const processRoi = asyncHandler(async (req, res) => {
-  const result = await roiService.processAllActiveInvestments(new Date());
+  const { date } = req.body || {};
+  const forDate = date ? new Date(date) : new Date();
+  const result = await roiService.processAllActiveInvestments(forDate);
   res.status(200).json({
     success: true,
     message: 'ROI processing completed',
