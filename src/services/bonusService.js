@@ -329,6 +329,13 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
  */
 const distributeProfitShare = async (totalAmount, adminId, method = null) => {
   const settings = await SystemSettings.getSettings();
+
+  if (!settings.profitShareTransferEnabled) {
+    const error = new Error('Profit Share distribution is currently disabled by admin');
+    error.statusCode = 400;
+    throw error;
+  }
+
   const distributionMethod = method || settings.profitShareDistributionMethod || 'EQUAL';
 
   const roundedTotal = roundToTwoDecimals(totalAmount);

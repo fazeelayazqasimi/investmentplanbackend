@@ -209,6 +209,7 @@ const getTransferSettings = asyncHandler(async (req, res) => {
     data: {
       roiTransferEnabled: settings.roiTransferEnabled,
       profitShareTransferEnabled: settings.profitShareTransferEnabled,
+      fundTransferEnabled: settings.fundTransferEnabled,
     },
   });
 });

@@ -604,21 +604,15 @@ const getAdminReferralStats = asyncHandler(async (req, res) => {
 
   const directRelationships = await User.countDocuments({ referredBy: { $ne: null }, role: 'USER' });
 
-  // Count total indirect relationships (all levels below direct)
-  let totalIndirect = 0;
-  const directUserIds = await User.find({ role: 'USER' }).select('_id').lean();
-  const allIds = directUserIds.map((u) => u._id.toString());
-
-  // BFS to count indirect relationships
-  let currentParentIds = allIds;
-  let level = 1;
-  while (currentParentIds.length > 0 && level <= 50) {
-    const children = await User.find({ referredBy: { $in: currentParentIds }, role: 'USER' }).select('_id').lean();
-    if (children.length === 0) break;
-    totalIndirect += children.length;
-    currentParentIds = children.map((u) => u._id.toString());
-    level += 1;
-  }
+  // Count indirect relationships (level 2+) efficiently via aggregation
+  const indirectAgg = await User.aggregate([
+    { $match: { role: 'USER', referredBy: { $ne: null } } },
+    { $lookup: { from: 'users', localField: 'referredBy', foreignField: '_id', as: 'referrer' } },
+    { $unwind: '$referrer' },
+    { $match: { 'referrer.referredBy': { $ne: null } } },
+    { $count: 'total' },
+  ]);
+  const totalIndirect = indirectAgg[0]?.total || 0;
 
   // Total team investment (all user investments)
   const investmentAgg = await Investment.aggregate([

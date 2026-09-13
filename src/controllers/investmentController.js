@@ -7,7 +7,7 @@ const investmentService = require('../services/investmentService');
 // @access  Private (User)
 // ==========================================
 const createInvestment = asyncHandler(async (req, res) => {
-  const { amount, startDate } = req.body;
+  const { amount, startDate, walletBreakdown } = req.body;
 
   const investment = await investmentService.createInvestment({
     targetUserId: req.user.id,
@@ -15,6 +15,7 @@ const createInvestment = asyncHandler(async (req, res) => {
     createdByRole: req.user.role,
     amount,
     startDate,
+    walletBreakdown,
   });
 
   res.status(201).json({

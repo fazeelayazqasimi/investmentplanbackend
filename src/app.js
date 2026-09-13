@@ -96,6 +96,8 @@ app.use('/api/roi', require('./routes/roiRoutes'));
 app.use('/api/wallet', require('./routes/walletRoutes'));
 app.use('/api/bank-accounts', require('./routes/bankAccountRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
+app.use('/api/announcements', require('./routes/announcementRoutes'));
+app.use('/api/chat', require('./routes/chatRoutes'));
 
 // ==========================================
 // 404 HANDLER (for undefined routes)

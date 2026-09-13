@@ -61,19 +61,11 @@ const roiHistorySchema = new mongoose.Schema(
       index: true,
     },
 
-    // Day of week name, stored for readability/reporting (derived from
+    // Day identifier, stored for readability/reporting (derived from
     // roiDate at creation time, relevant mainly for DAY_WISE mode).
+    // Supports both day-of-week names and numbered-day patterns (day_1, day_2, etc.)
     roiDay: {
       type: String,
-      enum: [
-        'monday',
-        'tuesday',
-        'wednesday',
-        'thursday',
-        'friday',
-        'saturday',
-        'sunday',
-      ],
       required: [true, 'ROI day is required'],
     },
 

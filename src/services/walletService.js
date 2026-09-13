@@ -346,6 +346,15 @@ const transferRoiToMain = async (userId, adminOverride = false) => {
 // MAIN WALLET -> FUND WALLET TRANSFER
 // ==========================================
 const transferMainToFund = async (userId, amount) => {
+  const SystemSettings = require('../models/SystemSettings');
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.fundTransferEnabled) {
+    const error = new Error('Fund Wallet transfers are currently disabled by admin');
+    error.statusCode = 400;
+    throw error;
+  }
+
   const roundedAmount = roundToTwoDecimals(amount);
 
   if (roundedAmount <= 0) {

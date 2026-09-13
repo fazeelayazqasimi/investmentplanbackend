@@ -37,6 +37,7 @@ const createInvestment = async ({
   createdByRole,
   amount,
   startDate,
+  walletBreakdown,
 }) => {
   const settings = await SystemSettings.getSettings();
   const roundedAmount = roundToTwoDecimals(amount);
@@ -50,9 +51,25 @@ const createInvestment = async ({
     throw error;
   }
 
-  // Use global ROI settings
-  const roiPercentage = settings.overallRoiPercentage || 0;
-  const durationDays = null;
+  // Parse wallet breakdown (multi-wallet split)
+  const mainAmt = roundToTwoDecimals(Number(walletBreakdown?.main) || 0);
+  const ewalletAmt = roundToTwoDecimals(Number(walletBreakdown?.ewallet) || 0);
+  const fundAmt = roundToTwoDecimals(Number(walletBreakdown?.fund) || 0);
+  const hasBreakdown = walletBreakdown && (mainAmt > 0 || ewalletAmt > 0 || fundAmt > 0);
+
+  // If breakdown provided, validate it sums to total
+  if (hasBreakdown) {
+    const breakdownTotal = roundToTwoDecimals(mainAmt + ewalletAmt + fundAmt);
+    if (Math.abs(breakdownTotal - roundedAmount) > 0.01) {
+      const error = new Error(`Wallet split ($${breakdownTotal}) must equal investment amount ($${roundedAmount})`);
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  // Use ROI settings based on mode
+  const roiPercentage = settings.roiMode === 'DAY_WISE' ? 0 : (settings.overallRoiPercentage || 0);
+  const durationDays = settings.roiMode === 'DAY_WISE' ? (settings.roiDays || null) : null;
 
   const computedStartDate = startDate ? new Date(startDate) : new Date();
 
@@ -64,12 +81,34 @@ const createInvestment = async ({
     await session.withTransaction(async () => {
       // Re-check balance inside the transaction (authoritative, server-side).
       const wallet = await Wallet.findOne({ user: targetUserId }).session(session);
-      const available = wallet ? wallet.mainBalance : 0;
+      const availableMain = wallet ? wallet.mainBalance : 0;
+      const availableEwallet = wallet ? wallet.ewalletBalance : 0;
+      const availableFund = wallet ? wallet.fundBalance : 0;
 
-      if (available < roundedAmount) {
-        const error = new Error('Insufficient main balance for this investment');
-        error.statusCode = 400;
-        throw error;
+      if (hasBreakdown) {
+        // Validate each wallet has sufficient balance
+        if (mainAmt > availableMain) {
+          const error = new Error(`Insufficient Main Wallet balance. Available: $${availableMain}`);
+          error.statusCode = 400;
+          throw error;
+        }
+        if (ewalletAmt > availableEwallet) {
+          const error = new Error(`Insufficient E-Wallet balance. Available: $${availableEwallet}`);
+          error.statusCode = 400;
+          throw error;
+        }
+        if (fundAmt > availableFund) {
+          const error = new Error(`Insufficient Fund Wallet balance. Available: $${availableFund}`);
+          error.statusCode = 400;
+          throw error;
+        }
+      } else {
+        // Legacy: deduct all from main balance
+        if (availableMain < roundedAmount) {
+          const error = new Error('Insufficient main balance for this investment');
+          error.statusCode = 400;
+          throw error;
+        }
       }
 
       // --- ACCOUNT ACTIVATION CHECK ---
@@ -97,24 +136,64 @@ const createInvestment = async ({
             dayWiseRoiSchedule: settings.roiMode === 'DAY_WISE' ? settings.dayWiseRoiSchedule : [],
             durationDays,
             startDate: computedStartDate,
-            endDate: null,
+            endDate: computedEndDate,
             createdBy: createdByUserId,
           },
         ],
         { session }
       );
 
-      // Deduct investment amount from main balance
-      await walletService.adjustWalletBalance({
-        userId: targetUserId,
-        balanceField: 'mainBalance',
-        amount: -roundedAmount,
-        type: 'INVESTMENT',
-        investmentId: investment[0]._id,
-        description: `Investment: $${roundedAmount}`,
-        createdBy: createdByUserId,
-        session,
-      });
+      if (hasBreakdown) {
+        // Deduct from each wallet separately
+        if (mainAmt > 0) {
+          await walletService.adjustWalletBalance({
+            userId: targetUserId,
+            balanceField: 'mainBalance',
+            amount: -mainAmt,
+            type: 'INVESTMENT',
+            investmentId: investment[0]._id,
+            description: `Investment from Main Wallet: $${mainAmt}`,
+            createdBy: createdByUserId,
+            session,
+          });
+        }
+        if (ewalletAmt > 0) {
+          await walletService.adjustWalletBalance({
+            userId: targetUserId,
+            balanceField: 'ewalletBalance',
+            amount: -ewalletAmt,
+            type: 'INVESTMENT',
+            investmentId: investment[0]._id,
+            description: `Investment from E-Wallet: $${ewalletAmt}`,
+            createdBy: createdByUserId,
+            session,
+          });
+        }
+        if (fundAmt > 0) {
+          await walletService.adjustWalletBalance({
+            userId: targetUserId,
+            balanceField: 'fundBalance',
+            amount: -fundAmt,
+            type: 'INVESTMENT',
+            investmentId: investment[0]._id,
+            description: `Investment from Fund Wallet: $${fundAmt}`,
+            createdBy: createdByUserId,
+            session,
+          });
+        }
+      } else {
+        // Legacy: deduct all from main balance
+        await walletService.adjustWalletBalance({
+          userId: targetUserId,
+          balanceField: 'mainBalance',
+          amount: -roundedAmount,
+          type: 'INVESTMENT',
+          investmentId: investment[0]._id,
+          description: `Investment: $${roundedAmount}`,
+          createdBy: createdByUserId,
+          session,
+        });
+      }
 
       // Update wallet total investment tracking for ROI 2X cap
       let userWallet = await Wallet.findOne({ user: targetUserId }).session(session);
@@ -319,7 +398,8 @@ const createDownlineInvestmentWithEwallet = async ({
         throw error;
       }
 
-      const computedStartDate = startDate ? new Date(startDate) : new Date();
+  const computedStartDate = startDate ? new Date(startDate) : new Date();
+  const computedEndDate = durationDays ? new Date(computedStartDate.getTime() + durationDays * 24 * 60 * 60 * 1000) : null;
 
       // Create investment for receiver
       investment = await Investment.create(

@@ -217,7 +217,7 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
             remainingReturn: newRemainingReturn,
             roiDate,
             roiDay: dayName,
-            roiMode: settings.roiMode,
+            roiMode: freshInvestment.roiMode || settings.roiMode,
             transactionType: 'ROI',
             status,
           },
