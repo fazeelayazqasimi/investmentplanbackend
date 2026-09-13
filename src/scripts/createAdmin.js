@@ -38,7 +38,7 @@ if (!MONGO_URI) {
   console.log('  Email:   ', email);
   console.log('  Password:', password);
   console.log('-----------------------------------------');
-  console.log('Then open https://investmentplanfrontend.vercel.app/login and log in.');
+  console.log('Then open https://www.finriseglobal.io/login and log in.');
 
   await mongoose.disconnect();
   process.exit(0);

@@ -15,6 +15,8 @@ app.use(helmet());
 // CORS - allow the configured client origin(s) plus known deployment URLs.
 const DEFAULT_ORIGINS = [
   'https://investmentplanfrontend.vercel.app',
+  'https://www.finriseglobal.io',
+  'https://finriseglobal.io',
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:5000',
