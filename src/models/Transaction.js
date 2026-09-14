@@ -68,6 +68,14 @@ const transactionSchema = new mongoose.Schema(
       // null = system-generated (e.g. automatic ROI distribution)
       // set  = admin-initiated (e.g. manual adjustment)
     },
+
+    // Optional structured data attached to specific transaction types.
+    // Used by DIRECT_INCOME / LEVEL_INCOME to store the originating
+    // investment amount and percentage so the frontend can display them.
+    metadata: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
   },
   {
     timestamps: true,

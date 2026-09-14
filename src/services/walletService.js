@@ -36,6 +36,7 @@ const adjustWalletBalance = async ({
   description = '',
   reference = null,
   createdBy = null,
+  metadata = null,
   session: externalSession = null,
 }) => {
   const validFields = ['mainBalance', 'roiBalance', 'commissionBalance', 'ewalletBalance', 'profitShareBalance', 'pendingCommissions', 'fundBalance'];
@@ -88,6 +89,7 @@ const adjustWalletBalance = async ({
           description,
           reference,
           createdBy,
+          metadata,
         },
       ],
       { session }

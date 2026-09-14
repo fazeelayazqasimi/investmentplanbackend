@@ -72,6 +72,9 @@ const createInvestment = async ({
   const durationDays = settings.roiMode === 'DAY_WISE' ? (settings.roiDays || null) : null;
 
   const computedStartDate = startDate ? new Date(startDate) : new Date();
+  const computedEndDate = durationDays
+    ? new Date(computedStartDate.getTime() + durationDays * 24 * 60 * 60 * 1000)
+    : null;
 
   const session = await mongoose.startSession();
 
@@ -212,7 +215,8 @@ const createInvestment = async ({
         await bonusService.creditDirectIncome(
           user.referredBy,
           roundedAmount,
-          session
+          session,
+          investment[0]._id
         );
 
         // Level 2 income -> indirect upline (Level 2)
@@ -221,7 +225,8 @@ const createInvestment = async ({
           await bonusService.creditLevelIncome(
             directUpline.referredBy,
             roundedAmount,
-            session
+            session,
+            investment[0]._id
           );
         }
       }
@@ -466,14 +471,16 @@ const createDownlineInvestmentWithEwallet = async ({
         await bonusService.creditDirectIncome(
           receiver.referredBy,
           roundedAmount,
-          session
+          session,
+          investment[0]._id
         );
         const directUpline = await User.findById(receiver.referredBy).session(session);
         if (directUpline && directUpline.referredBy) {
           await bonusService.creditLevelIncome(
             directUpline.referredBy,
             roundedAmount,
-            session
+            session,
+            investment[0]._id
           );
         }
       }

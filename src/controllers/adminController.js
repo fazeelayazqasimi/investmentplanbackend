@@ -274,9 +274,28 @@ const listInvestments = asyncHandler(async (req, res) => {
 // @access  Private (Admin)
 // ==========================================
 const listTransactions = asyncHandler(async (req, res) => {
-  const { type, page = 1, limit = 20 } = req.query;
+  const { type, status, search, dateFrom, dateTo, page = 1, limit = 20 } = req.query;
   const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
   const lim = Math.min(100, Number(limit));
+
+  // If searching by user name/email, find matching user IDs first
+  let userIds = null;
+  if (search && search.trim().length > 0) {
+    const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(escaped, 'i');
+    const users = await User.find({ $or: [{ name: re }, { email: re }] }).select('_id').lean();
+    userIds = users.map(u => u._id);
+    if (userIds.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'Transactions fetched successfully',
+        data: {
+          transactions: [],
+          pagination: { page: Number(page), limit: lim, total: 0, totalPages: 0 },
+        },
+      });
+    }
+  }
 
   const pipeline = [
     {
@@ -287,6 +306,13 @@ const listTransactions = asyncHandler(async (req, res) => {
 
   const match = {};
   if (type) match.type = type;
+  if (status) match.status = status;
+  if (userIds) match.user = { $in: userIds };
+  if (dateFrom || dateTo) {
+    match.createdAt = {};
+    if (dateFrom) match.createdAt.$gte = new Date(dateFrom);
+    if (dateTo) match.createdAt.$lte = new Date(dateTo + 'T23:59:59.999Z');
+  }
   pipeline.push({ $match: match });
 
   const countPipeline = [...pipeline, { $count: 'total' }];
@@ -537,6 +563,34 @@ const processRoi = asyncHandler(async (req, res) => {
   res.status(200).json({
     success: true,
     message: 'ROI processing completed',
+    data: result,
+  });
+});
+
+// ==========================================
+// @desc    Manually process ROI for all active investments at a given percentage (admin only)
+// @route   POST /api/admin/roi/process-manual
+// @access  Private (Admin)
+// ==========================================
+const processRoiManual = asyncHandler(async (req, res) => {
+  const { percentage } = req.body || {};
+
+  if (percentage === undefined || percentage === null || percentage === '') {
+    res.status(400);
+    throw new Error('ROI percentage is required');
+  }
+
+  const numPercentage = Number(percentage);
+  if (isNaN(numPercentage) || numPercentage <= 0) {
+    res.status(400);
+    throw new Error('ROI percentage must be a number greater than zero');
+  }
+
+  const forDate = new Date();
+  const result = await roiService.processManualRoi(numPercentage, forDate);
+  res.status(200).json({
+    success: true,
+    message: 'Manual ROI processing completed',
     data: result,
   });
 });
@@ -1136,6 +1190,7 @@ module.exports = {
   getSettings,
   updateSettings,
   processRoi,
+  processRoiManual,
   distributeProfitShare,
   triggerRoiTransfer,
   triggerProfitShareTransfer,

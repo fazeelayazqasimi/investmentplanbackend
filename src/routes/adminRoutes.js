@@ -10,6 +10,7 @@ const {
   getSettings,
   updateSettings,
   processRoi,
+  processRoiManual,
   distributeProfitShare,
   triggerRoiTransfer,
   triggerProfitShareTransfer,
@@ -48,6 +49,7 @@ router.put('/settings', updateSettings);
 
 // ROI processing
 router.post('/roi/process', processRoi);
+router.post('/roi/process-manual', processRoiManual);
 
 // ROI Transfer
 router.post('/roi/transfer', triggerRoiTransfer);

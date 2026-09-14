@@ -96,11 +96,12 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
   const roiDate = normalizeToMidnightUTC(forDate);
 
-  // Only distribute ROI on days that fall within the investment's active window.
+  // Only process ROI on or after the investment's start date.
+  // We intentionally do NOT check endDate here — the 2X cap (maxReturnAmount)
+  // is the real termination condition. The modulo cycling logic in
+  // getApplicableRoiPercentage already handles repeating day schedules.
   const startMid = investment.startDate ? normalizeToMidnightUTC(investment.startDate) : null;
-  const endMid = investment.endDate ? normalizeToMidnightUTC(investment.endDate) : null;
   if (startMid && roiDate < startMid) return null;
-  if (endMid && roiDate > endMid) return null;
 
   // Get ROI percentage using investment's snapshot schedule if available
   const globalRoi = getApplicableRoiPercentage(settings, roiDate, investment);
@@ -169,13 +170,41 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       appliedRoiAmount = roundToTwoDecimals(Math.max(0, appliedRoiAmount));
 
+      // ==========================================
+      // GLOBAL 3X CAP ENFORCEMENT
+      // Total eligible earnings (ROI + Direct + Level + ProfitShare)
+      // cannot exceed eligibleInvestmentBase * 3.
+      // The lower of the 2X per-investment cap and the 3X global cap wins.
+      // ==========================================
+      const eligibleBase = wallet.eligibleInvestmentBase || 0;
+      const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
+      const cap3x = roundToTwoDecimals(eligibleBase * 3);
+
+      let finalAppliedRoi = appliedRoiAmount;
+      let overflowToPending = roundToTwoDecimals(pendingRoiAmount); // from 2X overflow
+
+      if (eligibleBase > 0 && appliedRoiAmount > 0) {
+        const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
+        if (remaining3x <= 0) {
+          // 3X cap already reached — entire ROI goes to pending
+          overflowToPending = roundToTwoDecimals(overflowToPending + appliedRoiAmount);
+          finalAppliedRoi = 0;
+        } else if (appliedRoiAmount > remaining3x) {
+          // 3X cap limits further — credit only what fits
+          overflowToPending = roundToTwoDecimals(overflowToPending + (appliedRoiAmount - remaining3x));
+          finalAppliedRoi = remaining3x;
+        }
+      }
+
+      finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
+
       // If nothing to distribute at all (no ROI, no pending), skip
-      if (appliedRoiAmount <= 0 && pendingRoiAmount <= 0) {
+      if (finalAppliedRoi <= 0 && overflowToPending <= 0) {
         return;
       }
 
       const newTotalReturned = roundToTwoDecimals(
-        previousTotalReturned + appliedRoiAmount
+        previousTotalReturned + finalAppliedRoi
       );
       const newRemainingReturn = roundToTwoDecimals(
         Math.max(0, totalMaxReturn - newTotalReturned)
@@ -184,10 +213,10 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       // Update the investment record (for display/history purposes)
       freshInvestment.totalRoiEarned = roundToTwoDecimals(
-        freshInvestment.totalRoiEarned + appliedRoiAmount
+        freshInvestment.totalRoiEarned + finalAppliedRoi
       );
       freshInvestment.totalReturned = roundToTwoDecimals(
-        freshInvestment.totalReturned + appliedRoiAmount
+        freshInvestment.totalReturned + finalAppliedRoi
       );
 
       if (isNowComplete) {
@@ -197,10 +226,10 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       await freshInvestment.save({ session });
 
-      // Update wallet-level tracking (display purposes and 3X cap)
-      wallet.totalRoiEarned = roundToTwoDecimals((wallet.totalRoiEarned || 0) + appliedRoiAmount);
-      wallet.totalReturned = roundToTwoDecimals((wallet.totalReturned || 0) + appliedRoiAmount);
-      wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + appliedRoiAmount);
+      // Update wallet-level tracking
+      wallet.totalRoiEarned = roundToTwoDecimals((wallet.totalRoiEarned || 0) + finalAppliedRoi);
+      wallet.totalReturned = roundToTwoDecimals((wallet.totalReturned || 0) + finalAppliedRoi);
+      wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + finalAppliedRoi);
       await wallet.save({ session });
 
       // Create the ROI ledger record
@@ -210,7 +239,7 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
             user: freshInvestment.user,
             investment: freshInvestment._id,
             roiPercentage: percentage,
-            roiAmount: appliedRoiAmount,
+            roiAmount: finalAppliedRoi,
             originalInvestmentAmount: freshInvestment.originalAmount,
             previousTotalReturned,
             newTotalReturned,
@@ -227,12 +256,12 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       createdRecord = records[0];
 
-      // Credit the applied ROI to roiBalance (within 2X cap)
-      if (appliedRoiAmount > 0) {
+      // Credit the applied ROI to roiBalance (within 2X + 3X caps)
+      if (finalAppliedRoi > 0) {
         await walletService.adjustWalletBalance({
           userId: freshInvestment.user,
           balanceField: 'roiBalance',
-          amount: appliedRoiAmount,
+          amount: finalAppliedRoi,
           type: 'ROI',
           investmentId: freshInvestment._id,
           description: `ROI credit (${percentage}%) for investment on ${roiDate.toISOString().split('T')[0]}`,
@@ -242,7 +271,7 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         });
       }
 
-      // Phase 2: Credit overflow ROI to pendingCommissions (beyond 2X cap)
+      // Credit overflow from 2X cap to pendingCommissions
       if (pendingRoiAmount > 0) {
         await walletService.adjustWalletBalance({
           userId: freshInvestment.user,
@@ -251,6 +280,22 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
           type: 'PENDING_ROI',
           investmentId: freshInvestment._id,
           description: `Pending ROI (2X cap overflow) for investment on ${roiDate.toISOString().split('T')[0]} - $${pendingRoiAmount}`,
+          reference: createdRecord._id.toString(),
+          createdBy: null,
+          session,
+        });
+      }
+
+      // Credit overflow from 3X cap to pendingCommissions
+      const network3xOverflow = roundToTwoDecimals(overflowToPending - pendingRoiAmount);
+      if (network3xOverflow > 0) {
+        await walletService.adjustWalletBalance({
+          userId: freshInvestment.user,
+          balanceField: 'pendingCommissions',
+          amount: network3xOverflow,
+          type: 'PENDING_NETWORK_COMMISSION',
+          investmentId: freshInvestment._id,
+          description: `Pending ROI (3X global cap overflow) for investment on ${roiDate.toISOString().split('T')[0]} - $${network3xOverflow}`,
           reference: createdRecord._id.toString(),
           createdBy: null,
           session,
@@ -360,9 +405,250 @@ const getUserRoiHistory = async (userId, { page = 1, limit = 20 } = {}) => {
   };
 };
 
+/**
+ * Processes ROI manually for ALL active investments using a single
+ * admin-supplied percentage. This is a one-time action for today.
+ *
+ * - Uses the supplied percentage directly (ignores schedule)
+ * - Respects the 2X per-investment cap
+ * - Respects the global 3X earnings cap
+ * - Prevents duplicate same-day processing
+ * - Does NOT modify AUTO schedule configuration
+ *
+ * @param {number} percentage - the ROI percentage to apply
+ * @param {Date} [forDate=new Date()]
+ * @returns {Promise<{ processed: number, skipped: number, failed: number, totalCredited: number, errors: Array }>}
+ */
+const processManualRoi = async (percentage, forDate = new Date()) => {
+  if (!percentage || percentage <= 0) {
+    const error = new Error('ROI percentage must be greater than zero');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.roiProcessingEnabled) {
+    return { processed: 0, skipped: 0, failed: 0, totalCredited: 0, errors: [], message: 'ROI processing is disabled' };
+  }
+
+  const roiDate = normalizeToMidnightUTC(forDate);
+  const activeInvestments = await Investment.find({ status: 'ACTIVE' });
+
+  let processed = 0;
+  let skipped = 0;
+  let failed = 0;
+  let totalCredited = 0;
+  const errors = [];
+
+  for (const investment of activeInvestments) {
+    try {
+      const result = await processManualInvestmentRoi(investment, percentage, roiDate);
+      if (result) {
+        processed += 1;
+        totalCredited = roundToTwoDecimals(totalCredited + result.appliedRoiAmount);
+      } else {
+        skipped += 1;
+      }
+    } catch (error) {
+      failed += 1;
+      errors.push({ investmentId: investment._id.toString(), message: error.message });
+    }
+  }
+
+  return { processed, skipped, failed, totalCredited, errors };
+};
+
+/**
+ * Processes manual ROI for a single investment using a fixed percentage.
+ * Uses the same 2X and 3X cap logic as automatic processing, but takes
+ * the percentage directly from the admin instead of from the schedule.
+ *
+ * @param {Object} investment - Investment document (must be ACTIVE)
+ * @param {number} percentage - the admin-supplied ROI percentage
+ * @param {Date} roiDate - the normalized ROI date
+ * @returns {Promise<Object|null>} result with appliedRoiAmount, or null if skipped
+ */
+const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
+  if (investment.status !== 'ACTIVE') {
+    return null;
+  }
+
+  const startMid = investment.startDate ? normalizeToMidnightUTC(investment.startDate) : null;
+  if (startMid && roiDate < startMid) return null;
+
+  const rawRoiAmount = roundToTwoDecimals((investment.originalAmount * percentage) / 100);
+  if (rawRoiAmount <= 0) {
+    return null;
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    let result = null;
+
+    await session.withTransaction(async () => {
+      const freshInvestment = await Investment.findById(investment._id).session(session);
+      if (!freshInvestment || freshInvestment.status !== 'ACTIVE') {
+        return;
+      }
+
+      let wallet = await Wallet.findOne({ user: freshInvestment.user }).session(session);
+      if (!wallet) {
+        const created = await Wallet.create([{ user: freshInvestment.user }], { session });
+        wallet = created[0];
+      }
+
+      // 2X cap enforcement
+      const totalMaxReturn = freshInvestment.maxReturnAmount;
+      const totalReturned = freshInvestment.totalReturned || 0;
+      const previousTotalReturned = totalReturned;
+      const remainingBeforeThisRoi = roundToTwoDecimals(totalMaxReturn - previousTotalReturned);
+
+      let appliedRoiAmount = rawRoiAmount;
+      let pendingRoiAmount = 0;
+      let status = 'SUCCESS';
+
+      if (rawRoiAmount > remainingBeforeThisRoi && remainingBeforeThisRoi > 0) {
+        appliedRoiAmount = remainingBeforeThisRoi;
+        pendingRoiAmount = roundToTwoDecimals(rawRoiAmount - remainingBeforeThisRoi);
+        status = 'CAPPED';
+      } else if (remainingBeforeThisRoi <= 0) {
+        appliedRoiAmount = 0;
+        pendingRoiAmount = rawRoiAmount;
+        status = 'CAPPED';
+      }
+
+      appliedRoiAmount = roundToTwoDecimals(Math.max(0, appliedRoiAmount));
+
+      // 3X cap enforcement
+      const eligibleBase = wallet.eligibleInvestmentBase || 0;
+      const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
+      const cap3x = roundToTwoDecimals(eligibleBase * 3);
+
+      let finalAppliedRoi = appliedRoiAmount;
+      let overflowToPending = roundToTwoDecimals(pendingRoiAmount);
+
+      if (eligibleBase > 0 && appliedRoiAmount > 0) {
+        const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
+        if (remaining3x <= 0) {
+          overflowToPending = roundToTwoDecimals(overflowToPending + appliedRoiAmount);
+          finalAppliedRoi = 0;
+        } else if (appliedRoiAmount > remaining3x) {
+          overflowToPending = roundToTwoDecimals(overflowToPending + (appliedRoiAmount - remaining3x));
+          finalAppliedRoi = remaining3x;
+        }
+      }
+
+      finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
+
+      if (finalAppliedRoi <= 0 && overflowToPending <= 0) {
+        return;
+      }
+
+      const newTotalReturned = roundToTwoDecimals(previousTotalReturned + finalAppliedRoi);
+      const newRemainingReturn = roundToTwoDecimals(Math.max(0, totalMaxReturn - newTotalReturned));
+      const isNowComplete = newTotalReturned >= totalMaxReturn;
+
+      freshInvestment.totalRoiEarned = roundToTwoDecimals(freshInvestment.totalRoiEarned + finalAppliedRoi);
+      freshInvestment.totalReturned = roundToTwoDecimals(freshInvestment.totalReturned + finalAppliedRoi);
+
+      if (isNowComplete) {
+        freshInvestment.status = 'COMPLETED';
+        freshInvestment.completionDate = new Date();
+      }
+
+      await freshInvestment.save({ session });
+
+      wallet.totalRoiEarned = roundToTwoDecimals((wallet.totalRoiEarned || 0) + finalAppliedRoi);
+      wallet.totalReturned = roundToTwoDecimals((wallet.totalReturned || 0) + finalAppliedRoi);
+      wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + finalAppliedRoi);
+      await wallet.save({ session });
+
+      const records = await ROIHistory.create(
+        [
+          {
+            user: freshInvestment.user,
+            investment: freshInvestment._id,
+            roiPercentage: percentage,
+            roiAmount: finalAppliedRoi,
+            originalInvestmentAmount: freshInvestment.originalAmount,
+            previousTotalReturned,
+            newTotalReturned,
+            remainingReturn: newRemainingReturn,
+            roiDate,
+            roiDay: 'manual',
+            roiMode: freshInvestment.roiMode || settings.roiMode,
+            transactionType: 'ROI',
+            status,
+          },
+        ],
+        { session }
+      );
+
+      const createdRecord = records[0];
+
+      if (finalAppliedRoi > 0) {
+        await walletService.adjustWalletBalance({
+          userId: freshInvestment.user,
+          balanceField: 'roiBalance',
+          amount: finalAppliedRoi,
+          type: 'ROI',
+          investmentId: freshInvestment._id,
+          description: `Manual ROI credit (${percentage}%) for investment on ${roiDate.toISOString().split('T')[0]}`,
+          reference: createdRecord._id.toString(),
+          createdBy: null,
+          session,
+        });
+      }
+
+      if (pendingRoiAmount > 0) {
+        await walletService.adjustWalletBalance({
+          userId: freshInvestment.user,
+          balanceField: 'pendingCommissions',
+          amount: pendingRoiAmount,
+          type: 'PENDING_ROI',
+          investmentId: freshInvestment._id,
+          description: `Pending ROI (2X cap overflow) manual on ${roiDate.toISOString().split('T')[0]} - $${pendingRoiAmount}`,
+          reference: createdRecord._id.toString(),
+          createdBy: null,
+          session,
+        });
+      }
+
+      const network3xOverflow = roundToTwoDecimals(overflowToPending - pendingRoiAmount);
+      if (network3xOverflow > 0) {
+        await walletService.adjustWalletBalance({
+          userId: freshInvestment.user,
+          balanceField: 'pendingCommissions',
+          amount: network3xOverflow,
+          type: 'PENDING_NETWORK_COMMISSION',
+          investmentId: freshInvestment._id,
+          description: `Pending ROI (3X global cap overflow) manual on ${roiDate.toISOString().split('T')[0]} - $${network3xOverflow}`,
+          reference: createdRecord._id.toString(),
+          createdBy: null,
+          session,
+        });
+      }
+
+      result = { appliedRoiAmount: finalAppliedRoi, status };
+    });
+
+    return result;
+  } catch (error) {
+    if (error.code === 11000) {
+      return null;
+    }
+    throw error;
+  } finally {
+    session.endSession();
+  }
+};
+
 module.exports = {
   processInvestmentRoi,
   processAllActiveInvestments,
+  processManualRoi,
   getInvestmentRoiHistory,
   getUserRoiHistory,
   getApplicableRoiPercentage,

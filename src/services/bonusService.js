@@ -100,9 +100,10 @@ const processRegistrationBonuses = async (userId, uplineId, session) => {
  * @param {string} directUplineId - the direct upline who receives the income
  * @param {number} investmentAmount - the actual investment amount (after activation fee)
  * @param {import('mongoose').ClientSession} session - caller's MongoDB session
+ * @param {string} [investmentId] - the investment that generated this income
  * @returns {Promise<Object|null>} { mainCredited, pendingCredited, transaction, pendingTransaction } or null
  */
-const creditDirectIncome = async (directUplineId, investmentAmount, session) => {
+const creditDirectIncome = async (directUplineId, investmentAmount, session, investmentId = null) => {
   const settings = await SystemSettings.getSettings();
   const percentage = settings.directIncomePercentage || 0;
 
@@ -152,6 +153,8 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session) => 
       description: `Direct income (${percentage}%) from downline investment - $${incomeAmount}`,
       reference: null,
       createdBy: null,
+      investmentId,
+      metadata: { investmentAmount, percentage },
       session,
     });
     mainTransaction = result.transaction;
@@ -170,6 +173,8 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session) => 
         description: `Direct income (${percentage}%) from downline investment - $${allowedAmount} (capped)`,
         reference: null,
         createdBy: null,
+        investmentId,
+        metadata: { investmentAmount, percentage },
         session,
       });
       mainTransaction = result.transaction;
@@ -213,9 +218,10 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session) => 
  * @param {string} level2UplineId - the level 2 upline who receives the income
  * @param {number} investmentAmount - the actual investment amount (after activation fee)
  * @param {import('mongoose').ClientSession} session - caller's MongoDB session
+ * @param {string} [investmentId] - the investment that generated this income
  * @returns {Promise<Object|null>} { mainCredited, pendingCredited, transaction, pendingTransaction } or null
  */
-const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
+const creditLevelIncome = async (level2UplineId, investmentAmount, session, investmentId = null) => {
   const settings = await SystemSettings.getSettings();
   const percentage = settings.levelIncomePercentage || 0;
 
@@ -265,6 +271,8 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
       description: `Level income (${percentage}%) from indirect downline investment - $${incomeAmount}`,
       reference: null,
       createdBy: null,
+      investmentId,
+      metadata: { investmentAmount, percentage },
       session,
     });
     mainTransaction = result.transaction;
@@ -283,6 +291,8 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session) => {
         description: `Level income (${percentage}%) from indirect downline investment - $${allowedAmount} (capped)`,
         reference: null,
         createdBy: null,
+        investmentId,
+        metadata: { investmentAmount, percentage },
         session,
       });
       mainTransaction = result.transaction;
