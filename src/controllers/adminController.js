@@ -541,6 +541,69 @@ const updateSettings = asyncHandler(async (req, res) => {
     }));
   }
 
+  // ==========================================
+  // MULTI-LEVEL INCOME VALIDATION
+  // ==========================================
+  if (body.levels !== undefined) {
+    if (!Array.isArray(body.levels)) {
+      return res.status(400).json({ success: false, message: 'levels must be an array' });
+    }
+    const validated = [];
+    for (let i = 0; i < body.levels.length; i++) {
+      const item = body.levels[i];
+      const lvl = Number(item.level);
+      const pct = Number(item.percentage);
+      if (!Number.isInteger(lvl) || lvl < 1) {
+        return res.status(400).json({ success: false, message: `Level ${i + 1}: level must be a positive integer` });
+      }
+      if (isNaN(pct) || pct < 0 || pct > 100) {
+        return res.status(400).json({ success: false, message: `Level ${lvl}: percentage must be between 0 and 100` });
+      }
+      validated.push({ level: lvl, percentage: pct });
+    }
+    // Must start from 1 and be sequential
+    validated.sort((a, b) => a.level - b.level);
+    for (let i = 0; i < validated.length; i++) {
+      if (validated[i].level !== i + 1) {
+        return res.status(400).json({ success: false, message: 'Levels must be sequential starting from 1 (no gaps)' });
+      }
+    }
+    settings.levels = validated;
+
+    // Keep legacy fields synchronized for backward compatibility
+    if (validated.length >= 1) settings.directIncomePercentage = validated[0].percentage;
+    if (validated.length >= 2) settings.levelIncomePercentage = validated[1].percentage;
+  }
+
+  // ==========================================
+  // PROFIT SHARE LEVELS VALIDATION
+  // ==========================================
+  if (body.profitShareLevels !== undefined) {
+    if (!Array.isArray(body.profitShareLevels)) {
+      return res.status(400).json({ success: false, message: 'profitShareLevels must be an array' });
+    }
+    const validated = [];
+    for (let i = 0; i < body.profitShareLevels.length; i++) {
+      const item = body.profitShareLevels[i];
+      const lvl = Number(item.level);
+      const pct = Number(item.percentage);
+      if (!Number.isInteger(lvl) || lvl < 1) {
+        return res.status(400).json({ success: false, message: `Profit Share Level ${i + 1}: level must be a positive integer` });
+      }
+      if (isNaN(pct) || pct < 0 || pct > 100) {
+        return res.status(400).json({ success: false, message: `Profit Share Level ${lvl}: percentage must be between 0 and 100` });
+      }
+      validated.push({ level: lvl, percentage: pct });
+    }
+    validated.sort((a, b) => a.level - b.level);
+    for (let i = 0; i < validated.length; i++) {
+      if (validated[i].level !== i + 1) {
+        return res.status(400).json({ success: false, message: 'Profit Share Levels must be sequential starting from 1 (no gaps)' });
+      }
+    }
+    settings.profitShareLevels = validated;
+  }
+
   settings.updatedBy = req.user.id;
   await settings.save();
 

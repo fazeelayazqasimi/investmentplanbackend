@@ -91,6 +91,7 @@ const systemSettingsSchema = new mongoose.Schema(
     // ==========================================
     // INCOME SETTINGS
     // ==========================================
+    // Legacy flat fields (kept for backward compatibility)
     directIncomePercentage: {
       type: Number,
       default: 10,
@@ -103,6 +104,26 @@ const systemSettingsSchema = new mongoose.Schema(
       min: [0, 'Level income percentage cannot be negative'],
       max: [100, 'Level income percentage cannot exceed 100'],
     },
+
+    // ==========================================
+    // MULTI-LEVEL INCOME CONFIGURATION
+    // ==========================================
+    // Authoritative source for level income percentages.
+    // Each entry: { level: Number (1-based sequential), percentage: Number (0-100) }
+    levels: [{
+      level: { type: Number, required: true, min: 1 },
+      percentage: { type: Number, default: 0, min: 0, max: 100 },
+    }],
+
+    // ==========================================
+    // PROFIT SHARE LEVEL CONFIGURATION
+    // ==========================================
+    // Upline-based profit share distribution percentages.
+    // Each entry: { level: Number (1-based sequential), percentage: Number (0-100) }
+    profitShareLevels: [{
+      level: { type: Number, required: true, min: 1 },
+      percentage: { type: Number, default: 0, min: 0, max: 100 },
+    }],
 
     // ==========================================
     // ROI TRANSFER SETTINGS
@@ -192,6 +213,23 @@ systemSettingsSchema.statics.getSettings = async function () {
     settings = await this.create({
       singletonKey: 'GLOBAL_SETTINGS',
     });
+  }
+
+  // Auto-migrate: if levels array is empty/missing, seed from legacy fields
+  if (!settings.levels || settings.levels.length === 0) {
+    const l1 = settings.directIncomePercentage || 10;
+    const l2 = settings.levelIncomePercentage || 5;
+    settings.levels = [
+      { level: 1, percentage: l1 },
+      { level: 2, percentage: l2 },
+    ];
+    await settings.save();
+  }
+
+  // Auto-migrate: if profitShareLevels is empty/missing, seed with default
+  if (!settings.profitShareLevels || settings.profitShareLevels.length === 0) {
+    settings.profitShareLevels = [{ level: 1, percentage: 3 }];
+    await settings.save();
   }
 
   return settings;

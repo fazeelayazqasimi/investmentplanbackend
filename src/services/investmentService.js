@@ -208,26 +208,36 @@ const createInvestment = async ({
       userWallet.totalMaxReturn = roundToTwoDecimals(userWallet.totalInvestmentAmount * 2);
       await userWallet.save({ session });
 
-      // --- DIRECT & LEVEL INCOME ---
-      // Income goes to the investor's uplines, NOT to the investor
+      // --- LEVEL INCOME (all configured levels) ---
+      // Traverse upline chain for every configured level in settings.levels.
+      // Level 1 = direct upline (creditDirectIncome), Level 2+ = indirect (creditLevelIncomeForLevel).
+      // Inactive uplines receive nothing. Own investment never generates self-income.
       if (user && user.referredBy) {
-        // Direct income -> direct upline (Level 1)
-        await bonusService.creditDirectIncome(
-          user.referredBy,
-          roundedAmount,
-          session,
-          investment[0]._id
-        );
+        const sortedLevels = [...(settings.levels || [])].sort((a, b) => a.level - b.level);
+        let currentUserId = user.referredBy.toString();
 
-        // Level 2 income -> indirect upline (Level 2)
-        const directUpline = await User.findById(user.referredBy).session(session);
-        if (directUpline && directUpline.referredBy) {
-          await bonusService.creditLevelIncome(
-            directUpline.referredBy,
-            roundedAmount,
-            session,
-            investment[0]._id
-          );
+        for (const levelConfig of sortedLevels) {
+          if (!currentUserId) break;
+
+          if (levelConfig.level === 1) {
+            await bonusService.creditDirectIncome(
+              currentUserId,
+              roundedAmount,
+              session,
+              investment[0]._id
+            );
+          } else {
+            await bonusService.creditLevelIncomeForLevel(
+              levelConfig.level,
+              currentUserId,
+              roundedAmount,
+              session,
+              investment[0]._id
+            );
+          }
+
+          const currentUser = await User.findById(currentUserId).session(session);
+          currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
         }
       }
     });
@@ -466,22 +476,33 @@ const createDownlineInvestmentWithEwallet = async ({
       receiverWallet.totalMaxReturn = roundToTwoDecimals(receiverWallet.totalInvestmentAmount * 2);
       await receiverWallet.save({ session });
 
-      // Direct & Level income for receiver's uplines
+      // --- LEVEL INCOME (all configured levels) for receiver's uplines ---
       if (receiver.referredBy) {
-        await bonusService.creditDirectIncome(
-          receiver.referredBy,
-          roundedAmount,
-          session,
-          investment[0]._id
-        );
-        const directUpline = await User.findById(receiver.referredBy).session(session);
-        if (directUpline && directUpline.referredBy) {
-          await bonusService.creditLevelIncome(
-            directUpline.referredBy,
-            roundedAmount,
-            session,
-            investment[0]._id
-          );
+        const sortedLevels = [...(settings.levels || [])].sort((a, b) => a.level - b.level);
+        let currentUserId = receiver.referredBy.toString();
+
+        for (const levelConfig of sortedLevels) {
+          if (!currentUserId) break;
+
+          if (levelConfig.level === 1) {
+            await bonusService.creditDirectIncome(
+              currentUserId,
+              roundedAmount,
+              session,
+              investment[0]._id
+            );
+          } else {
+            await bonusService.creditLevelIncomeForLevel(
+              levelConfig.level,
+              currentUserId,
+              roundedAmount,
+              session,
+              investment[0]._id
+            );
+          }
+
+          const currentUser = await User.findById(currentUserId).session(session);
+          currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
         }
       }
     });

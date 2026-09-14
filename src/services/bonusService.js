@@ -105,7 +105,8 @@ const processRegistrationBonuses = async (userId, uplineId, session) => {
  */
 const creditDirectIncome = async (directUplineId, investmentAmount, session, investmentId = null) => {
   const settings = await SystemSettings.getSettings();
-  const percentage = settings.directIncomePercentage || 0;
+  const level1Config = (settings.levels || []).find(l => l.level === 1);
+  const percentage = level1Config ? level1Config.percentage : (settings.directIncomePercentage || 0);
 
   if (percentage <= 0 || !directUplineId) {
     return null;
@@ -195,8 +196,8 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
     }
   }
 
-  // Update tracking fields atomically
-  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
+  // Update tracking fields atomically — only ACTUALLY CREDITED amount counts
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
   wallet.eligibleInvestmentBase = newBase;
   await wallet.save({ session });
 
@@ -223,7 +224,8 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
  */
 const creditLevelIncome = async (level2UplineId, investmentAmount, session, investmentId = null) => {
   const settings = await SystemSettings.getSettings();
-  const percentage = settings.levelIncomePercentage || 0;
+  const level2Config = (settings.levels || []).find(l => l.level === 2);
+  const percentage = level2Config ? level2Config.percentage : (settings.levelIncomePercentage || 0);
 
   if (percentage <= 0 || !level2UplineId) {
     return null;
@@ -313,8 +315,8 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
     }
   }
 
-  // Update tracking fields atomically
-  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
+  // Update tracking fields atomically — only ACTUALLY CREDITED amount counts
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
   wallet.eligibleInvestmentBase = newBase;
   await wallet.save({ session });
 
@@ -322,22 +324,135 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
 };
 
 /**
- * Distributes profit share from platform revenue to all active users.
- * Admin-triggered only. Each user's share goes to their Profit Share Wallet.
+ * Credits level income for a specific configured level to an upline's Main Wallet.
+ * Called for Level 2+ (Level 1 uses creditDirectIncome).
  *
- * 3X CAP ENFORCEMENT: Total earnings (Direct + Level + Profit Share) cannot
- * exceed 3x the user's eligible investment base. Overflow goes to pendingCommissions.
+ * Reads the percentage from settings.levels for the given level number.
+ * Enforces the same 3X cap as all other eligible income.
  *
- * Distribution methods:
- * - EQUAL: total amount divided equally among all active users
- * - PROPORTIONAL: distributed based on each user's total investment amount
- *
- * @param {number} totalAmount - total amount to distribute
- * @param {string} adminId - admin who triggered the distribution
- * @param {string} method - 'EQUAL' or 'PROPORTIONAL' (optional, uses settings default)
- * @returns {Promise<{ distributed: number, userCount: number, method: string }>}
+ * @param {number} level - the configured level number (2, 3, 4, ...)
+ * @param {string} uplineId - the upline who receives this level's income
+ * @param {number} investmentAmount - the actual investment amount
+ * @param {import('mongoose').ClientSession} session - caller's MongoDB session
+ * @param {string} [investmentId] - the investment that generated this income
+ * @returns {Promise<Object|null>} { mainCredited, pendingCredited, mainTransaction, pendingTransaction } or null
  */
-const distributeProfitShare = async (totalAmount, adminId, method = null) => {
+const creditLevelIncomeForLevel = async (level, uplineId, investmentAmount, session, investmentId = null) => {
+  const settings = await SystemSettings.getSettings();
+  const levelConfig = (settings.levels || []).find(l => l.level === level);
+  const percentage = levelConfig ? levelConfig.percentage : 0;
+
+  if (percentage <= 0 || !uplineId) {
+    return null;
+  }
+
+  const incomeAmount = roundToTwoDecimals((investmentAmount * percentage) / 100);
+
+  if (incomeAmount <= 0) {
+    return null;
+  }
+
+  // Check activation status — inactive users get nothing
+  const upline = await User.findById(uplineId).session(session);
+  if (!upline || !upline.isActivated) {
+    return null;
+  }
+
+  // Fetch wallet inside session for atomic cap check
+  let wallet = await Wallet.findOne({ user: uplineId }).session(session);
+  if (!wallet) {
+    const created = await Wallet.create([{ user: uplineId }], { session });
+    wallet = created[0];
+  }
+
+  // Unified 3X earnings cap enforcement
+  const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
+  const currentBase = wallet.eligibleInvestmentBase || 0;
+  const newBase = roundToTwoDecimals(currentBase + investmentAmount);
+  const cap3x = roundToTwoDecimals(newBase * 3);
+  const newTotalAfterCredit = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
+
+  let mainCredited = 0;
+  let pendingCredited = 0;
+  let mainTransaction = null;
+  let pendingTransaction = null;
+
+  if (newTotalAfterCredit <= cap3x) {
+    // Under cap — full amount to main balance
+    mainCredited = incomeAmount;
+    const result = await walletService.adjustWalletBalance({
+      userId: uplineId,
+      balanceField: 'mainBalance',
+      amount: incomeAmount,
+      type: 'LEVEL_INCOME',
+      description: `Level ${level} income (${percentage}%) from downline investment - $${incomeAmount}`,
+      reference: null,
+      createdBy: null,
+      investmentId,
+      metadata: { investmentAmount, percentage, level },
+      session,
+    });
+    mainTransaction = result.transaction;
+  } else {
+    // Over cap — split between main and pending
+    const allowedAmount = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
+    pendingCredited = roundToTwoDecimals(incomeAmount - allowedAmount);
+
+    if (allowedAmount > 0) {
+      mainCredited = allowedAmount;
+      const result = await walletService.adjustWalletBalance({
+        userId: uplineId,
+        balanceField: 'mainBalance',
+        amount: allowedAmount,
+        type: 'LEVEL_INCOME',
+        description: `Level ${level} income (${percentage}%) from downline investment - $${allowedAmount} (capped)`,
+        reference: null,
+        createdBy: null,
+        investmentId,
+        metadata: { investmentAmount, percentage, level },
+        session,
+      });
+      mainTransaction = result.transaction;
+    }
+
+    if (pendingCredited > 0) {
+      const pendingResult = await walletService.adjustWalletBalance({
+        userId: uplineId,
+        balanceField: 'pendingCommissions',
+        amount: pendingCredited,
+        type: 'PENDING_NETWORK_COMMISSION',
+        description: `Pending network commission (3X cap overflow) - $${pendingCredited}`,
+        reference: null,
+        createdBy: null,
+        session,
+      });
+      pendingTransaction = pendingResult.transaction;
+    }
+  }
+
+  // Update tracking fields atomically — only ACTUALLY CREDITED amount counts
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
+  wallet.eligibleInvestmentBase = newBase;
+  await wallet.save({ session });
+
+  return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
+};
+
+/**
+ * Distributes profit share from platform revenue to uplines based on
+ * configured profitShareLevels. Admin-triggered only.
+ *
+ * For each eligible user's investment, traverses their upline chain
+ * and distributes the configured percentage at each level.
+ *
+ * 3X CAP ENFORCEMENT: Total eligible earnings cannot exceed 3x eligibleInvestmentBase.
+ * Overflow goes to pendingCommissions.
+ *
+ * @param {number} totalAmount - total amount to distribute (used as source)
+ * @param {string} adminId - admin who triggered the distribution
+ * @returns {Promise<{ distributed: number, userCount: number, levels: number }>}
+ */
+const distributeProfitShare = async (totalAmount, adminId) => {
   const settings = await SystemSettings.getSettings();
 
   if (!settings.profitShareTransferEnabled) {
@@ -346,7 +461,12 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
     throw error;
   }
 
-  const distributionMethod = method || settings.profitShareDistributionMethod || 'EQUAL';
+  const psLevels = settings.profitShareLevels || [];
+  if (psLevels.length === 0) {
+    const error = new Error('No profit share levels configured');
+    error.statusCode = 400;
+    throw error;
+  }
 
   const roundedTotal = roundToTwoDecimals(totalAmount);
   if (roundedTotal <= 0) {
@@ -355,9 +475,56 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
     throw error;
   }
 
-  const activeUsers = await User.find({ role: 'USER', accountStatus: 'ACTIVE' }).lean();
-  if (activeUsers.length === 0) {
-    return { distributed: 0, userCount: 0, method: distributionMethod };
+  // Find all users who have investments (potential profit share recipients' downlines)
+  const Transaction = require('../models/Transaction');
+  const investedAgg = await Transaction.aggregate([
+    { $match: { type: 'INVESTMENT', status: 'COMPLETED' } },
+    { $group: { _id: '$user', total: { $sum: '$amount' } } },
+  ]);
+
+  // Map investor userId -> total invested amount
+  const investorMap = {};
+  investedAgg.forEach((a) => {
+    investorMap[a._id.toString()] = a.total;
+  });
+
+  if (Object.keys(investorMap).length === 0) {
+    return { distributed: 0, userCount: 0, levels: psLevels.length };
+  }
+
+  // Collect all unique upline recipients and their expected amounts
+  // Key: uplineId, Value: { totalAmount, description }
+  const uplineRecipients = new Map();
+
+  for (const [investorId, investedAmount] of Object.entries(investorMap)) {
+    // For each investor, distribute to their upline chain according to profitShareLevels
+    for (const psLevel of psLevels) {
+      // Walk up the chain to find the upline at this level
+      let currentId = investorId;
+      let uplineAtLevel = null;
+
+      for (let hop = 0; hop < psLevel.level; hop++) {
+        const u = await User.findById(currentId).select('referredBy').lean();
+        if (!u || !u.referredBy) break;
+        currentId = u.referredBy.toString();
+        if (hop === psLevel.level - 1) {
+          uplineAtLevel = currentId;
+        }
+      }
+
+      if (!uplineAtLevel) continue;
+
+      const shareAmount = roundToTwoDecimals((investedAmount * psLevel.percentage) / 100);
+      if (shareAmount <= 0) continue;
+
+      const key = uplineAtLevel;
+      if (!uplineRecipients.has(key)) {
+        uplineRecipients.set(key, { totalAmount: 0, details: [] });
+      }
+      const entry = uplineRecipients.get(key);
+      entry.totalAmount = roundToTwoDecimals(entry.totalAmount + shareAmount);
+      entry.details.push({ investorId, level: psLevel.level, percentage: psLevel.percentage, shareAmount, investedAmount });
+    }
   }
 
   const session = await require('mongoose').startSession();
@@ -367,177 +534,64 @@ const distributeProfitShare = async (totalAmount, adminId, method = null) => {
     let userCount = 0;
 
     await session.withTransaction(async () => {
-      if (distributionMethod === 'EQUAL') {
-        const perUser = roundToTwoDecimals(roundedTotal / activeUsers.length);
+      for (const [uplineId, { totalAmount: uplineTotal, details }] of uplineRecipients) {
+        if (uplineTotal <= 0) continue;
 
-        for (const user of activeUsers) {
-          if (perUser > 0) {
-            // Unified 3X CAP CHECK: Total eligible earnings cannot exceed 3x eligibleInvestmentBase
-            const wallet = await Wallet.findOne({ user: user._id }).session(session);
-            const eligibleBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
-            const currentEligibleEarnings = wallet ? (wallet.totalEligibleEarnings || 0) : 0;
-            const cap3x = roundToTwoDecimals(eligibleBase * 3);
-            const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
+        // Check activation — inactive uplines get nothing
+        const upline = await User.findById(uplineId).session(session);
+        if (!upline || !upline.isActivated) continue;
 
-            if (remaining3x <= 0) {
-              // Already at 3x cap - all goes to pendingCommissions
-              if (perUser > 0) {
-                await walletService.adjustWalletBalance({
-                  userId: user._id,
-                  balanceField: 'pendingCommissions',
-                  amount: perUser,
-                  type: 'PENDING_NETWORK_COMMISSION',
-                  description: `Pending profit share (3X cap overflow) - $${perUser}`,
-                  reference: `dist_${Date.now()}`,
-                  createdBy: adminId,
-                  session,
-                });
-                // Still track profit share earned even though it's pending
-                if (wallet) {
-                  wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + perUser);
-                  wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + perUser);
-                  await wallet.save({ session });
-                }
-              }
-              continue;
-            }
-
-            const allowedAmount = roundToTwoDecimals(Math.min(perUser, remaining3x));
-            const pendingAmount = roundToTwoDecimals(perUser - allowedAmount);
-
-            if (allowedAmount > 0) {
-              await walletService.adjustWalletBalance({
-                userId: user._id,
-                balanceField: 'profitShareBalance',
-                amount: allowedAmount,
-                type: 'PROFIT_SHARE',
-                description: `Profit share distribution (equal) - $${allowedAmount}`,
-                reference: `dist_${Date.now()}`,
-                createdBy: adminId,
-                session,
-              });
-              distributed = roundToTwoDecimals(distributed + allowedAmount);
-              userCount++;
-            }
-
-            if (pendingAmount > 0) {
-              await walletService.adjustWalletBalance({
-                userId: user._id,
-                balanceField: 'pendingCommissions',
-                amount: pendingAmount,
-                type: 'PENDING_NETWORK_COMMISSION',
-                description: `Pending profit share (3X cap overflow) - $${pendingAmount}`,
-                reference: `dist_${Date.now()}`,
-                createdBy: adminId,
-                session,
-              });
-            }
-
-            // Track eligible earnings (both allowed + pending)
-            if (wallet) {
-              wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + perUser);
-              wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + perUser);
-              await wallet.save({ session });
-            }
-          }
-        }
-      } else {
-        // PROPORTIONAL: based on total invested amount
-        const Transaction = require('../models/Transaction');
-        const mongoose = require('mongoose');
-
-        const investedAgg = await Transaction.aggregate([
-          { $match: { type: 'INVESTMENT', status: 'COMPLETED' } },
-          { $group: { _id: '$user', total: { $sum: '$amount' } } },
-        ]);
-
-        const investMap = {};
-        let totalInvested = 0;
-        investedAgg.forEach((a) => {
-          investMap[a._id.toString()] = a.total;
-          totalInvested += a.total;
-        });
-
-        if (totalInvested <= 0) {
-          return;
+        // Fetch wallet for 3X cap check
+        let wallet = await Wallet.findOne({ user: uplineId }).session(session);
+        if (!wallet) {
+          const created = await Wallet.create([{ user: uplineId }], { session });
+          wallet = created[0];
         }
 
-        for (const user of activeUsers) {
-          const userInvested = investMap[user._id.toString()] || 0;
-          if (userInvested > 0) {
-            const share = roundToTwoDecimals((userInvested / totalInvested) * roundedTotal);
-            if (share > 0) {
-              // Unified 3X CAP CHECK
-              const wallet = await Wallet.findOne({ user: user._id }).session(session);
-              const eligibleBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
-              const currentEligibleEarnings = wallet ? (wallet.totalEligibleEarnings || 0) : 0;
-              const cap3x = roundToTwoDecimals(eligibleBase * 3);
-              const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
+        const eligibleBase = wallet.eligibleInvestmentBase || 0;
+        const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
+        const cap3x = roundToTwoDecimals(eligibleBase * 3);
+        const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
 
-              if (remaining3x <= 0) {
-                if (share > 0) {
-                  await walletService.adjustWalletBalance({
-                    userId: user._id,
-                    balanceField: 'pendingCommissions',
-                    amount: share,
-                    type: 'PENDING_NETWORK_COMMISSION',
-                    description: `Pending profit share (3X cap overflow) - $${share}`,
-                    reference: `dist_${Date.now()}`,
-                    createdBy: adminId,
-                    session,
-                  });
-                  if (wallet) {
-                    wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + share);
-                    wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + share);
-                    await wallet.save({ session });
-                  }
-                }
-                continue;
-              }
+        const allowedAmount = roundToTwoDecimals(Math.min(uplineTotal, remaining3x));
+        const pendingAmount = roundToTwoDecimals(uplineTotal - allowedAmount);
 
-              const allowedAmount = roundToTwoDecimals(Math.min(share, remaining3x));
-              const pendingAmount = roundToTwoDecimals(share - allowedAmount);
-
-              if (allowedAmount > 0) {
-                await walletService.adjustWalletBalance({
-                  userId: user._id,
-                  balanceField: 'profitShareBalance',
-                  amount: allowedAmount,
-                  type: 'PROFIT_SHARE',
-                  description: `Profit share distribution (proportional) - $${allowedAmount}`,
-                  reference: `dist_${Date.now()}`,
-                  createdBy: adminId,
-                  session,
-                });
-                distributed = roundToTwoDecimals(distributed + allowedAmount);
-                userCount++;
-              }
-
-              if (pendingAmount > 0) {
-                await walletService.adjustWalletBalance({
-                  userId: user._id,
-                  balanceField: 'pendingCommissions',
-                  amount: pendingAmount,
-                  type: 'PENDING_NETWORK_COMMISSION',
-                  description: `Pending profit share (3X cap overflow) - $${pendingAmount}`,
-                  reference: `dist_${Date.now()}`,
-                  createdBy: adminId,
-                  session,
-                });
-              }
-
-              if (wallet) {
-                wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + share);
-                wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + share);
-                await wallet.save({ session });
-              }
-            }
-          }
+        if (allowedAmount > 0) {
+          await walletService.adjustWalletBalance({
+            userId: uplineId,
+            balanceField: 'profitShareBalance',
+            amount: allowedAmount,
+            type: 'PROFIT_SHARE',
+            description: `Profit share distribution - $${allowedAmount}`,
+            reference: `dist_${Date.now()}`,
+            createdBy: adminId,
+            session,
+          });
+          distributed = roundToTwoDecimals(distributed + allowedAmount);
+          userCount++;
         }
+
+        if (pendingAmount > 0) {
+          await walletService.adjustWalletBalance({
+            userId: uplineId,
+            balanceField: 'pendingCommissions',
+            amount: pendingAmount,
+            type: 'PENDING_NETWORK_COMMISSION',
+            description: `Pending profit share (3X cap overflow) - $${pendingAmount}`,
+            reference: `dist_${Date.now()}`,
+            createdBy: adminId,
+            session,
+          });
+        }
+
+        // Track only ACTUALLY CREDITED amount in eligible earnings
+        wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + allowedAmount);
+        wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + uplineTotal);
+        await wallet.save({ session });
       }
     });
 
-    return { distributed, userCount, method: distributionMethod };
+    return { distributed, userCount, levels: psLevels.length };
   } finally {
     session.endSession();
   }
@@ -547,6 +601,7 @@ module.exports = {
   processRegistrationBonuses,
   creditDirectIncome,
   creditLevelIncome,
+  creditLevelIncomeForLevel,
   distributeProfitShare,
   roundToTwoDecimals,
 };
