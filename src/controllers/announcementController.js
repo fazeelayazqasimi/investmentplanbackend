@@ -1,4 +1,14 @@
 const Announcement = require('../models/Announcement');
+const { cloudinary } = require('../middleware/uploadMiddleware');
+
+const deleteCloudinaryImages = async (images) => {
+  if (!images || images.length === 0) return;
+  for (const img of images) {
+    try {
+      if (img.publicId) await cloudinary.uploader.destroy(img.publicId);
+    } catch (_) {}
+  }
+};
 
 // ==================== ADMIN CRUD ====================
 
@@ -7,17 +17,28 @@ exports.createAnnouncement = async (req, res) => {
     const { title, message, type, priority, showBanner, showModal, expiresAt } = req.body;
 
     if (!title || !message) {
+      if (req.files && req.files.length > 0) {
+        for (const f of req.files) {
+          try { await cloudinary.uploader.destroy(f.filename); } catch (_) {}
+        }
+      }
       return res.status(400).json({ message: 'Title and message are required' });
     }
+
+    const images = (req.files || []).map((f) => ({
+      url: f.path,
+      publicId: f.filename,
+    }));
 
     const announcement = await Announcement.create({
       title,
       message,
       type: type || 'INFO',
       priority: priority || 'MEDIUM',
-      showBanner: showBanner !== false,
-      showModal: showModal || false,
+      showBanner: showBanner !== 'false' && showBanner !== false,
+      showModal: showModal === 'true' || showModal === true,
       expiresAt: expiresAt || null,
+      images,
       createdBy: req.user.id,
     });
 
@@ -49,10 +70,42 @@ exports.listAnnouncements = async (req, res) => {
 exports.updateAnnouncement = async (req, res) => {
   try {
     const { id } = req.params;
-    const updates = req.body;
+    const announcement = await Announcement.findById(id);
+    if (!announcement) {
+      if (req.files && req.files.length > 0) {
+        for (const f of req.files) {
+          try { await cloudinary.uploader.destroy(f.filename); } catch (_) {}
+        }
+      }
+      return res.status(404).json({ message: 'Announcement not found' });
+    }
 
-    const announcement = await Announcement.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
-    if (!announcement) return res.status(404).json({ message: 'Announcement not found' });
+    const { title, message, type, priority, showBanner, showModal, expiresAt, removedImages } = req.body;
+
+    if (title !== undefined) announcement.title = title;
+    if (message !== undefined) announcement.message = message;
+    if (type !== undefined) announcement.type = type;
+    if (priority !== undefined) announcement.priority = priority;
+    if (showBanner !== undefined) announcement.showBanner = showBanner !== 'false' && showBanner !== false;
+    if (showModal !== undefined) announcement.showModal = showModal === 'true' || showModal === true;
+    if (expiresAt !== undefined) announcement.expiresAt = expiresAt || null;
+
+    if (removedImages) {
+      const toRemove = JSON.parse(removedImages);
+      if (toRemove.length > 0) {
+        for (const publicId of toRemove) {
+          try { await cloudinary.uploader.destroy(publicId); } catch (_) {}
+        }
+        announcement.images = announcement.images.filter((img) => !toRemove.includes(img.publicId));
+      }
+    }
+
+    if (req.files && req.files.length > 0) {
+      const newImages = req.files.map((f) => ({ url: f.path, publicId: f.filename }));
+      announcement.images.push(...newImages);
+    }
+
+    await announcement.save();
 
     res.json({ announcement });
   } catch (err) {
@@ -65,6 +118,8 @@ exports.deleteAnnouncement = async (req, res) => {
     const { id } = req.params;
     const announcement = await Announcement.findByIdAndDelete(id);
     if (!announcement) return res.status(404).json({ message: 'Announcement not found' });
+
+    await deleteCloudinaryImages(announcement.images);
 
     res.json({ message: 'Announcement deleted' });
   } catch (err) {
@@ -96,7 +151,7 @@ exports.getActiveAnnouncements = async (req, res) => {
       active: true,
       $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }],
     })
-      .select('title message type priority showBanner showModal createdAt')
+      .select('title message type priority showBanner showModal images createdAt')
       .sort({ priority: -1, createdAt: -1 });
 
     res.json({ announcements });

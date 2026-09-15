@@ -40,6 +40,10 @@ const announcementSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    images: [{
+      url: { type: String, required: true },
+      publicId: { type: String, required: true },
+    }],
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',

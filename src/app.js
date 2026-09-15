@@ -116,6 +116,13 @@ app.use((req, res) => {
 app.use((err, req, res, next) => {
   console.error(err.stack || err.message);
 
+  if (err.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ success: false, message: 'File too large. Maximum size is 5MB.' });
+  }
+  if (err.code === 'LIMIT_UNEXPECTED_FILE' || err.message?.includes('Only JPG')) {
+    return res.status(400).json({ success: false, message: err.message || 'Invalid file type. Only JPG, PNG, GIF, WebP allowed.' });
+  }
+
   const statusCode = err.statusCode || (res.statusCode !== 200 ? res.statusCode : 500);
 
   // Hide raw database/driver errors from the client.

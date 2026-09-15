@@ -9,11 +9,12 @@ const {
   getActiveAnnouncements,
 } = require('../controllers/announcementController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
+const { uploadAnnouncementImages } = require('../middleware/uploadMiddleware');
 
 // Admin routes
-router.post('/', authenticate, authorizeAdmin, createAnnouncement);
+router.post('/', authenticate, authorizeAdmin, uploadAnnouncementImages, createAnnouncement);
 router.get('/', authenticate, authorizeAdmin, listAnnouncements);
-router.put('/:id', authenticate, authorizeAdmin, updateAnnouncement);
+router.put('/:id', authenticate, authorizeAdmin, uploadAnnouncementImages, updateAnnouncement);
 router.delete('/:id', authenticate, authorizeAdmin, deleteAnnouncement);
 router.patch('/:id/toggle', authenticate, authorizeAdmin, toggleAnnouncement);
 

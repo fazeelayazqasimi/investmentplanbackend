@@ -134,7 +134,7 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         wallet = created[0];
       }
 
-      // Per-investment 2X cap (NOT wallet-level)
+      // Per-investment 2X cap — ROI stops completely, no pending overflow
       const totalMaxReturn = freshInvestment.maxReturnAmount; // already = originalAmount * 2
       const totalReturned = freshInvestment.totalReturned || 0;
 
@@ -151,20 +151,15 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         totalMaxReturn - previousTotalReturned
       );
 
-      // Phase 2: 2X cap enforcement with pending overflow (wallet-level)
+      // Phase 2: 2X cap enforcement — ROI stops completely, no pending
       let appliedRoiAmount = rawRoiAmount;
-      let pendingRoiAmount = 0;
       let status = 'SUCCESS';
 
       if (rawRoiAmount > remainingBeforeThisRoi && remainingBeforeThisRoi > 0) {
-        // Cap hit — credit what fits, overflow to pending
         appliedRoiAmount = remainingBeforeThisRoi;
-        pendingRoiAmount = roundToTwoDecimals(rawRoiAmount - remainingBeforeThisRoi);
         status = 'CAPPED';
       } else if (remainingBeforeThisRoi <= 0) {
-        // Already at 2X — entire amount goes to pending
         appliedRoiAmount = 0;
-        pendingRoiAmount = rawRoiAmount;
         status = 'CAPPED';
       }
 
@@ -173,33 +168,28 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
       // ==========================================
       // GLOBAL 3X CAP ENFORCEMENT
       // Total eligible earnings (ROI + Direct + Level + ProfitShare)
-      // cannot exceed eligibleInvestmentBase * 3.
-      // The lower of the 2X per-investment cap and the 3X global cap wins.
+      // cannot exceed totalInvestmentAmount * 3.
+      // ROI stops completely at 3X — no pending overflow.
       // ==========================================
-      const eligibleBase = wallet.eligibleInvestmentBase || 0;
+      const ownInvestment = wallet.totalInvestmentAmount || 0;
       const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
-      const cap3x = roundToTwoDecimals(eligibleBase * 3);
+      const cap3x = roundToTwoDecimals(ownInvestment * 3);
 
       let finalAppliedRoi = appliedRoiAmount;
-      let overflowToPending = roundToTwoDecimals(pendingRoiAmount); // from 2X overflow
 
-      if (eligibleBase > 0 && appliedRoiAmount > 0) {
+      if (ownInvestment > 0 && appliedRoiAmount > 0) {
         const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
         if (remaining3x <= 0) {
-          // 3X cap already reached — entire ROI goes to pending
-          overflowToPending = roundToTwoDecimals(overflowToPending + appliedRoiAmount);
           finalAppliedRoi = 0;
         } else if (appliedRoiAmount > remaining3x) {
-          // 3X cap limits further — credit only what fits
-          overflowToPending = roundToTwoDecimals(overflowToPending + (appliedRoiAmount - remaining3x));
           finalAppliedRoi = remaining3x;
         }
       }
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      // If nothing to distribute at all (no ROI, no pending), skip
-      if (finalAppliedRoi <= 0 && overflowToPending <= 0) {
+      // If nothing to distribute, skip
+      if (finalAppliedRoi <= 0) {
         return;
       }
 
@@ -265,37 +255,6 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
           type: 'ROI',
           investmentId: freshInvestment._id,
           description: `ROI credit (${percentage}%) for investment on ${roiDate.toISOString().split('T')[0]}`,
-          reference: createdRecord._id.toString(),
-          createdBy: null,
-          session,
-        });
-      }
-
-      // Credit overflow from 2X cap to pendingCommissions
-      if (pendingRoiAmount > 0) {
-        await walletService.adjustWalletBalance({
-          userId: freshInvestment.user,
-          balanceField: 'pendingCommissions',
-          amount: pendingRoiAmount,
-          type: 'PENDING_ROI',
-          investmentId: freshInvestment._id,
-          description: `Pending ROI (2X cap overflow) for investment on ${roiDate.toISOString().split('T')[0]} - $${pendingRoiAmount}`,
-          reference: createdRecord._id.toString(),
-          createdBy: null,
-          session,
-        });
-      }
-
-      // Credit overflow from 3X cap to pendingCommissions
-      const network3xOverflow = roundToTwoDecimals(overflowToPending - pendingRoiAmount);
-      if (network3xOverflow > 0) {
-        await walletService.adjustWalletBalance({
-          userId: freshInvestment.user,
-          balanceField: 'pendingCommissions',
-          amount: network3xOverflow,
-          type: 'PENDING_NETWORK_COMMISSION',
-          investmentId: freshInvestment._id,
-          description: `Pending ROI (3X global cap overflow) for investment on ${roiDate.toISOString().split('T')[0]} - $${network3xOverflow}`,
           reference: createdRecord._id.toString(),
           createdBy: null,
           session,
