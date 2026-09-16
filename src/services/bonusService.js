@@ -630,26 +630,12 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
   let distributed = 0;
   let recipients = 0;
 
+  // Start from investor's direct upline and walk sequentially —
+  // each iteration = next upline in chain (same logic as level income).
   let currentUserId = investor.referredBy.toString();
 
   for (const psLevel of psLevels) {
     if (!currentUserId) break;
-
-    let uplineId = currentUserId;
-    for (let hop = 1; hop < psLevel.level; hop++) {
-      const u = await User.findById(uplineId).session(session);
-      if (!u || !u.referredBy) {
-        uplineId = null;
-        break;
-      }
-      uplineId = u.referredBy.toString();
-    }
-
-    if (!uplineId) {
-      const currentUser = await User.findById(currentUserId).session(session);
-      currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
-      continue;
-    }
 
     const shareAmount = roundToTwoDecimals((roundedAmount * psLevel.percentage) / 100);
     if (shareAmount <= 0) {
@@ -658,16 +644,16 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
       continue;
     }
 
-    const upline = await User.findById(uplineId).session(session);
+    const upline = await User.findById(currentUserId).session(session);
     if (!upline || !upline.isActivated) {
       const currentUser = await User.findById(currentUserId).session(session);
       currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
       continue;
     }
 
-    let wallet = await Wallet.findOne({ user: uplineId }).session(session);
+    let wallet = await Wallet.findOne({ user: currentUserId }).session(session);
     if (!wallet) {
-      const created = await Wallet.create([{ user: uplineId }], { session });
+      const created = await Wallet.create([{ user: currentUserId }], { session });
       wallet = created[0];
     }
 
@@ -681,7 +667,7 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
 
     if (allowedAmount > 0) {
       await walletService.adjustWalletBalance({
-        userId: uplineId,
+        userId: currentUserId,
         balanceField: 'profitShareBalance',
         amount: allowedAmount,
         type: 'PROFIT_SHARE',
@@ -697,7 +683,7 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
 
     if (pendingAmount > 0) {
       await walletService.adjustWalletBalance({
-        userId: uplineId,
+        userId: currentUserId,
         balanceField: 'pendingCommissions',
         amount: pendingAmount,
         type: 'PENDING_NETWORK_COMMISSION',
@@ -712,6 +698,7 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
     wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + shareAmount);
     await wallet.save({ session });
 
+    // Advance to next upline in chain
     const currentUser = await User.findById(currentUserId).session(session);
     currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
   }
