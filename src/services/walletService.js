@@ -150,7 +150,7 @@ const getUserTransactions = async (userId, { page = 1, limit = 20, type } = {}) 
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate({ path: 'investment', select: 'originalAmount' })
+      .populate({ path: 'investment', select: 'originalAmount user', populate: { path: 'user', select: 'name email' } })
       .lean(),
     Transaction.countDocuments(query),
   ]);

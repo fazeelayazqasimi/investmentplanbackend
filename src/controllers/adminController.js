@@ -302,6 +302,28 @@ const listTransactions = asyncHandler(async (req, res) => {
       $lookup: { from: 'users', localField: 'user', foreignField: '_id', as: 'user' },
     },
     { $unwind: '$user' },
+    {
+      $lookup: {
+        from: 'investments',
+        localField: 'investment',
+        foreignField: '_id',
+        as: 'investment',
+      },
+    },
+    {
+      $unwind: { path: '$investment', preserveNullAndEmptyArrays: true },
+    },
+    {
+      $lookup: {
+        from: 'users',
+        localField: 'investment.user',
+        foreignField: '_id',
+        as: 'investmentUser',
+      },
+    },
+    {
+      $unwind: { path: '$investmentUser', preserveNullAndEmptyArrays: true },
+    },
   ];
 
   const match = {};
@@ -315,12 +337,17 @@ const listTransactions = asyncHandler(async (req, res) => {
   }
   pipeline.push({ $match: match });
 
-  const countPipeline = [...pipeline, { $count: 'total' }];
+  const countPipeline = [
+    { $lookup: { from: 'users', localField: 'user', foreignField: '_id', as: 'user' } },
+    { $unwind: '$user' },
+    ...pipeline.slice(2),
+    { $count: 'total' },
+  ];
   pipeline.push(
     { $sort: { createdAt: -1 } },
     { $skip: skip },
     { $limit: lim },
-    { $project: { 'user.password': 0, 'user.__v': 0 } }
+    { $project: { 'user.password': 0, 'user.__v': 0, 'investmentUser.password': 0, 'investmentUser.__v': 0 } }
   );
 
   const [transactions, countRes] = await Promise.all([
