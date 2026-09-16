@@ -89,6 +89,18 @@ const login = asyncHandler(async (req, res) => {
     throw new Error('Invalid email or password');
   }
 
+  if (user.accountStatus === 'DELETED') {
+    res.status(403);
+    throw new Error('This account has been deleted. Please contact support.');
+  }
+
+  // Auto-reactivate suspended users when timeline expires
+  if (user.accountStatus === 'SUSPENDED' && user.suspendedUntil && new Date() > user.suspendedUntil) {
+    user.accountStatus = 'ACTIVE';
+    user.suspendedUntil = null;
+    await user.save();
+  }
+
   if (user.accountStatus !== 'ACTIVE') {
     res.status(403);
     throw new Error('Your account is not active. Please contact support.');

@@ -1252,6 +1252,99 @@ const getAdminReferralMembers = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Deactivate a user account
+// @route   PATCH /api/admin/users/:id/deactivate
+// @access  Private (Admin)
+// ==========================================
+const deactivateUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await User.findById(id);
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found' });
+  }
+  if (user.role === 'ADMIN') {
+    return res.status(400).json({ success: false, message: 'Cannot deactivate admin accounts' });
+  }
+
+  user.accountStatus = 'INACTIVE';
+  user.suspendedUntil = null;
+  await user.save();
+
+  res.status(200).json({ success: true, message: 'User deactivated successfully' });
+});
+
+// ==========================================
+// @desc    Suspend a user account (optional timeline)
+// @route   PATCH /api/admin/users/:id/suspend
+// @access  Private (Admin)
+// ==========================================
+const suspendUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { suspendedUntil } = req.body;
+
+  const user = await User.findById(id);
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found' });
+  }
+  if (user.role === 'ADMIN') {
+    return res.status(400).json({ success: false, message: 'Cannot suspend admin accounts' });
+  }
+
+  user.accountStatus = 'SUSPENDED';
+  user.suspendedUntil = suspendedUntil ? new Date(suspendedUntil) : null;
+  await user.save();
+
+  const msg = suspendedUntil
+    ? `User suspended until ${new Date(suspendedUntil).toLocaleDateString()}`
+    : 'User suspended permanently';
+  res.status(200).json({ success: true, message: msg });
+});
+
+// ==========================================
+// @desc    Activate/reactivate a user account
+// @route   PATCH /api/admin/users/:id/activate
+// @access  Private (Admin)
+// ==========================================
+const activateUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await User.findById(id);
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found' });
+  }
+
+  user.accountStatus = 'ACTIVE';
+  user.suspendedUntil = null;
+  await user.save();
+
+  res.status(200).json({ success: true, message: 'User activated successfully' });
+});
+
+// ==========================================
+// @desc    Delete a user account (soft delete)
+// @route   DELETE /api/admin/users/:id
+// @access  Private (Admin)
+// ==========================================
+const deleteUser = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+
+  const user = await User.findById(id);
+  if (!user) {
+    return res.status(404).json({ success: false, message: 'User not found' });
+  }
+  if (user.role === 'ADMIN') {
+    return res.status(400).json({ success: false, message: 'Cannot delete admin accounts' });
+  }
+
+  user.accountStatus = 'DELETED';
+  user.suspendedUntil = null;
+  await user.save();
+
+  res.status(200).json({ success: true, message: 'User deleted successfully' });
+});
+
 module.exports = {
   listUsers,
   getUserDetail,
@@ -1270,4 +1363,8 @@ module.exports = {
   getAdminReferralTree,
   getAdminReferralMemberDetail,
   getAdminReferralMembers,
+  deactivateUser,
+  suspendUser,
+  activateUser,
+  deleteUser,
 };

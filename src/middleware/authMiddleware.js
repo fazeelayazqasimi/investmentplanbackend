@@ -39,6 +39,18 @@ const authenticate = asyncHandler(async (req, res, next) => {
     throw new Error('Not authorized, user no longer exists');
   }
 
+  if (user.accountStatus === 'DELETED') {
+    res.status(401);
+    throw new Error('Not authorized, account has been deleted');
+  }
+
+  // Auto-reactivate suspended users when timeline expires
+  if (user.accountStatus === 'SUSPENDED' && user.suspendedUntil && new Date() > user.suspendedUntil) {
+    user.accountStatus = 'ACTIVE';
+    user.suspendedUntil = null;
+    await user.save();
+  }
+
   if (user.accountStatus !== 'ACTIVE') {
     res.status(403);
     throw new Error('Your account is not active');

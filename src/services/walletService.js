@@ -69,9 +69,8 @@ const adjustWalletBalance = async ({
 
     wallet[balanceField] = newBalance;
 
-    // Track cumulative lifetime earnings for eligible credit types only.
-    // Excludes: SIGNUP_BONUS, UPLINE_SIGNUP_BONUS (free bonuses, not eligible earnings)
-    const creditTypes = ['ROI', 'COMMISSION', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE'];
+    // Track cumulative lifetime earnings for all credit types.
+    const creditTypes = ['ROI', 'COMMISSION', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS', 'PENDING_RELEASE'];
     if (creditTypes.includes(type) && roundedAmount > 0) {
       wallet.totalEarnings = roundToTwoDecimals(wallet.totalEarnings + roundedAmount);
     }

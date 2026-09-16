@@ -19,6 +19,10 @@ const {
   getAdminReferralTree,
   getAdminReferralMemberDetail,
   getAdminReferralMembers,
+  deactivateUser,
+  suspendUser,
+  activateUser,
+  deleteUser,
 } = require('../controllers/adminController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
@@ -35,6 +39,10 @@ router.get('/referrals/tree/:userId', getAdminReferralTree);
 // Users
 router.get('/users', listUsers);
 router.get('/users/:id', getUserDetail);
+router.patch('/users/:id/activate', activateUser);
+router.patch('/users/:id/deactivate', deactivateUser);
+router.patch('/users/:id/suspend', suspendUser);
+router.delete('/users/:id', deleteUser);
 
 // Investments (platform-wide)
 router.get('/investments', listInvestments);
