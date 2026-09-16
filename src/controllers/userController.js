@@ -1,7 +1,9 @@
 const asyncHandler = require('express-async-handler');
 const userService = require('../services/userService');
+const referralService = require('../services/referralService');
 const SystemSettings = require('../models/SystemSettings');
 const Wallet = require('../models/Wallet');
+const User = require('../models/User');
 
 // ==========================================
 // @desc    Get logged-in user's profile
@@ -128,10 +130,75 @@ const getProgressData = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Search logged-in user's downlines by email/name (for fund transfer)
+// @route   GET /api/users/downlines/search
+// @access  Private (User)
+// ==========================================
+const searchMyDownlines = asyncHandler(async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.trim().length < 1) {
+    return res.status(200).json({
+      success: true,
+      data: { users: [] },
+    });
+  }
+
+  const allDownlines = await referralService.getAllDownlines(req.user.id);
+
+  if (allDownlines.length === 0) {
+    return res.status(200).json({
+      success: true,
+      data: { users: [] },
+    });
+  }
+
+  const downlineIds = allDownlines.map((d) => d.user._id);
+
+  const escaped = q.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(escaped, 'i');
+
+  const matchedUsers = await User.find({
+    _id: { $in: downlineIds },
+    $or: [{ name: re }, { email: re }],
+  })
+    .select('name email accountStatus isActivated')
+    .limit(10)
+    .lean();
+
+  // Fetch wallet balances for matched users
+  const matchedIds = matchedUsers.map((u) => u._id);
+  const wallets = await Wallet.find({ user: { $in: matchedIds } })
+    .select('user mainBalance roiBalance ewalletBalance profitShareBalance fundBalance')
+    .lean();
+
+  const walletMap = {};
+  wallets.forEach((w) => { walletMap[w.user.toString()] = w; });
+
+  const usersWithBalance = matchedUsers.map((u) => {
+    const w = walletMap[u._id.toString()] || {};
+    const totalBalance = (w.mainBalance || 0) + (w.roiBalance || 0) + (w.ewalletBalance || 0) + (w.profitShareBalance || 0) + (w.fundBalance || 0);
+    return {
+      _id: u._id,
+      name: u.name,
+      email: u.email,
+      accountStatus: u.accountStatus,
+      isActivated: u.isActivated,
+      totalBalance: Math.round((totalBalance + Number.EPSILON) * 100) / 100,
+    };
+  });
+
+  res.status(200).json({
+    success: true,
+    data: { users: usersWithBalance },
+  });
+});
+
 module.exports = {
   getProfile,
   updateProfile,
   activateAccount,
   getPublicConfig,
   getProgressData,
+  searchMyDownlines,
 };

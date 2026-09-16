@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { getProfile, updateProfile, activateAccount, getPublicConfig, getProgressData } = require('../controllers/userController');
+const { getProfile, updateProfile, activateAccount, getPublicConfig, getProgressData, searchMyDownlines } = require('../controllers/userController');
 const {
   getMyUpline,
   getMyDownlines,
@@ -32,6 +32,9 @@ router.get('/progress', authenticate, getProgressData);
 
 // @route   GET /api/users/upline
 router.get('/upline', authenticate, getMyUpline);
+
+// @route   GET /api/users/downlines/search (MUST be before /downlines)
+router.get('/downlines/search', authenticate, searchMyDownlines);
 
 // @route   GET /api/users/downlines
 router.get('/downlines', authenticate, getMyDownlines);

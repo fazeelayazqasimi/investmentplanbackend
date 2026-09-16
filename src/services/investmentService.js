@@ -269,6 +269,14 @@ const createInvestment = async ({
           currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
         }
       }
+
+      // --- PROFIT SHARE (auto-distribute to uplines) ---
+      await bonusService.creditProfitShareForInvestment(
+        targetUserId,
+        roundedAmount,
+        session,
+        investment[0]._id
+      );
     });
 
     return investment[0];
@@ -563,6 +571,14 @@ const createDownlineInvestmentWithEwallet = async ({
           currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
         }
       }
+
+      // --- PROFIT SHARE (auto-distribute to uplines) ---
+      await bonusService.creditProfitShareForInvestment(
+        receiverId,
+        roundedAmount,
+        session,
+        investment[0]._id
+      );
     });
 
     return investment[0];
