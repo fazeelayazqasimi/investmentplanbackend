@@ -527,6 +527,14 @@ const updateSettings = asyncHandler(async (req, res) => {
     if (body[key] !== undefined) settings[key] = body[key];
   });
 
+  // Sync levels array when legacy scalar fields are updated
+  if (body.directIncomePercentage !== undefined && settings.levels && settings.levels.length >= 1) {
+    settings.levels[0].percentage = body.directIncomePercentage;
+  }
+  if (body.levelIncomePercentage !== undefined && settings.levels && settings.levels.length >= 2) {
+    settings.levels[1].percentage = body.levelIncomePercentage;
+  }
+
   if (body.dayWiseRoi) {
     const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
     days.forEach((d) => {
