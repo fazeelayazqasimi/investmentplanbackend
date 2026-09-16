@@ -234,6 +234,12 @@ const createInvestment = async ({
             createdBy: createdByUserId,
             session,
           });
+
+          // Update totalEligibleEarnings so released amount counts in 3X cap tracking
+          userWallet.totalEligibleEarnings = roundToTwoDecimals(
+            (userWallet.totalEligibleEarnings || 0) + releaseAmount
+          );
+          await userWallet.save({ session });
         }
       }
 
@@ -531,6 +537,12 @@ const createDownlineInvestmentWithEwallet = async ({
             createdBy: senderId,
             session,
           });
+
+          // Update totalEligibleEarnings so released amount counts in 3X cap tracking
+          receiverWallet.totalEligibleEarnings = roundToTwoDecimals(
+            (receiverWallet.totalEligibleEarnings || 0) + releaseAmount
+          );
+          await receiverWallet.save({ session });
         }
       }
 
