@@ -4,6 +4,7 @@ const Wallet = require('../models/Wallet');
 const ROIHistory = require('../models/ROIHistory');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
+const bonusService = require('./bonusService');
 
 const DAY_NAMES = [
   'sunday',
@@ -259,6 +260,14 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
           createdBy: null,
           session,
         });
+
+        // Distribute profit share from ROI to uplines
+        await bonusService.creditProfitShareFromRoi(
+          freshInvestment.user,
+          finalAppliedRoi,
+          session,
+          freshInvestment._id
+        );
       }
     });
 
@@ -559,6 +568,14 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
           createdBy: null,
           session,
         });
+
+        // Distribute profit share from ROI to uplines
+        await bonusService.creditProfitShareFromRoi(
+          freshInvestment.user,
+          finalAppliedRoi,
+          session,
+          freshInvestment._id
+        );
       }
 
       if (pendingRoiAmount > 0) {
