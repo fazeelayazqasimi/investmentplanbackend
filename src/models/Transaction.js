@@ -35,6 +35,7 @@ const transactionSchema = new mongoose.Schema(
         'FUND_TRANSFER_SENT', 'FUND_TRANSFER_RECEIVED',
         'MAIN_TO_FUND_TRANSFER', 'FUND_ACTIVATION',
         'E_WALLET_DOWNLINE_INVESTMENT', 'PENDING_PROFIT_SHARE',
+        'PENDING_RELEASE',
       ],
       required: [true, 'Transaction type is required'],
       index: true,
