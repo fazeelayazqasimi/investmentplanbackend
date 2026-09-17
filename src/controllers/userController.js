@@ -4,6 +4,7 @@ const referralService = require('../services/referralService');
 const SystemSettings = require('../models/SystemSettings');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
+const Investment = require('../models/Investment');
 
 // ==========================================
 // @desc    Get logged-in user's profile
@@ -113,6 +114,32 @@ const getProgressData = asyncHandler(async (req, res) => {
   const remaining3x = Math.max(0, milestone3x - progress3x);
   const percentage3x = milestone3x > 0 ? Math.min(100, Math.round((progress3x / milestone3x) * 100)) : 0;
 
+  // Per-investment 2X progress
+  const investments = await Investment.find({ user: req.user.id })
+    .sort({ createdAt: -1 })
+    .select('originalAmount maxReturnAmount totalReturned totalRoiEarned status startDate completionDate roiPercentage')
+    .lean();
+
+  const investmentProgress = investments.map(inv => {
+    const maxReturn = inv.maxReturnAmount || inv.originalAmount * 2;
+    const returned = inv.totalReturned || 0;
+    const remaining = Math.max(0, maxReturn - returned);
+    const pct = maxReturn > 0 ? Math.min(100, Math.round((returned / maxReturn) * 100)) : 0;
+    return {
+      _id: inv._id,
+      originalAmount: inv.originalAmount,
+      maxReturnAmount: maxReturn,
+      totalReturned: returned,
+      totalRoiEarned: inv.totalRoiEarned || 0,
+      status: inv.status,
+      percentage2x: pct,
+      remaining2x: remaining,
+      startDate: inv.startDate,
+      completionDate: inv.completionDate,
+      roiPercentage: inv.roiPercentage,
+    };
+  });
+
   res.status(200).json({
     success: true,
     data: {
@@ -126,6 +153,7 @@ const getProgressData = asyncHandler(async (req, res) => {
       remaining3x,
       percentage3x,
       totalEarnings,
+      investments: investmentProgress,
     },
   });
 });

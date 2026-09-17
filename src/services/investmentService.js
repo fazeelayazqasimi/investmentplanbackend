@@ -208,6 +208,13 @@ const createInvestment = async ({
       userWallet.totalMaxReturn = roundToTwoDecimals(userWallet.totalInvestmentAmount * 2);
       await userWallet.save({ session });
 
+      // Pause all previous ACTIVE investments — each cycle runs independently
+      await Investment.updateMany(
+        { user: targetUserId, status: 'ACTIVE', _id: { $ne: investment[0]._id } },
+        { $set: { status: 'PAUSED' } },
+        { session }
+      );
+
       // Auto-release pending 3X overflow on new investment
       const pendingAmount = userWallet.pendingCommissions || 0;
       if (pendingAmount > 0) {
