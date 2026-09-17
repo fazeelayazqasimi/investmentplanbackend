@@ -32,4 +32,19 @@ const uploadAnnouncementImages = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 }).array('images', 10);
 
-module.exports = { cloudinary, uploadAnnouncementImages };
+const chatStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'finrise/chat',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+    transformation: [{ width: 1200, height: 1200, crop: 'limit', quality: 'auto' }],
+  },
+});
+
+const uploadChatImages = multer({
+  storage: chatStorage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+}).array('images', 5);
+
+module.exports = { cloudinary, uploadAnnouncementImages, uploadChatImages };

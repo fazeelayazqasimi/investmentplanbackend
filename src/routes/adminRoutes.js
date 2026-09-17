@@ -23,6 +23,10 @@ const {
   suspendUser,
   activateUser,
   deleteUser,
+  updateUserCredentials,
+  adjustUserWallet,
+  requestWithdrawal,
+  listWithdrawals,
 } = require('../controllers/adminController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
@@ -43,9 +47,15 @@ router.patch('/users/:id/activate', activateUser);
 router.patch('/users/:id/deactivate', deactivateUser);
 router.patch('/users/:id/suspend', suspendUser);
 router.delete('/users/:id', deleteUser);
+router.patch('/users/:id/credentials', updateUserCredentials);
+router.post('/users/:id/wallet/adjust', adjustUserWallet);
+router.post('/users/:id/withdraw', requestWithdrawal);
 
 // Investments (platform-wide)
 router.get('/investments', listInvestments);
+
+// Withdrawals
+router.get('/withdrawals', listWithdrawals);
 
 // Transactions (platform-wide)
 router.get('/transactions', listTransactions);

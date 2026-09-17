@@ -39,12 +39,13 @@ exports.getUserMessages = async (req, res) => {
 exports.createUserConversation = async (req, res) => {
   try {
     const { subject, message } = req.body;
-    if (!message) return res.status(400).json({ message: 'Message is required' });
+    const images = (req.files || []).map(f => ({ url: f.path, publicId: f.filename }));
+    if (!message && images.length === 0) return res.status(400).json({ message: 'Message or image is required' });
 
     const conversation = await Conversation.create({
       user: req.user.id,
       subject: subject || 'Support Request',
-      lastMessage: message,
+      lastMessage: message || `${images.length} image(s) attached`,
       lastMessageAt: new Date(),
       lastMessageBy: req.user.id,
       unreadByAdmin: 1,
@@ -54,7 +55,8 @@ exports.createUserConversation = async (req, res) => {
       conversation: conversation._id,
       sender: req.user.id,
       senderRole: 'USER',
-      message,
+      message: message || '',
+      images,
     });
 
     res.status(201).json({ conversation });
@@ -67,21 +69,25 @@ exports.sendUserMessage = async (req, res) => {
   try {
     const { id } = req.params;
     const { message } = req.body;
-    if (!message) return res.status(400).json({ message: 'Message is required' });
+    const images = (req.files || []).map(f => ({ url: f.path, publicId: f.filename }));
+    if (!message && images.length === 0) return res.status(400).json({ message: 'Message or image is required' });
 
     const conversation = await Conversation.findOne({ _id: id, user: req.user.id });
     if (!conversation) return res.status(404).json({ message: 'Conversation not found' });
     if (conversation.status === 'CLOSED') return res.status(400).json({ message: 'Conversation is closed' });
 
+    const lastMsg = message || `${images.length} image(s) attached`;
+
     const msg = await Message.create({
       conversation: id,
       sender: req.user.id,
       senderRole: 'USER',
-      message,
+      message: message || '',
+      images,
     });
 
     await Conversation.findByIdAndUpdate(id, {
-      lastMessage: message,
+      lastMessage: lastMsg,
       lastMessageAt: new Date(),
       lastMessageBy: req.user.id,
       $inc: { unreadByAdmin: 1 },

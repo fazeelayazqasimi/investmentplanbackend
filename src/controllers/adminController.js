@@ -10,6 +10,7 @@ const roiService = require('../services/roiService');
 const walletService = require('../services/walletService');
 const { roundToTwoDecimals } = require('../services/walletService');
 const bonusService = require('../services/bonusService');
+const bcrypt = require('bcryptjs');
 
 // ==========================================
 // @desc    List all users (admin only)
@@ -1372,6 +1373,126 @@ const deleteUser = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, message: 'User deleted successfully' });
 });
 
+// ==========================================
+// @desc    Admin update user credentials (email/password)
+// @route   PATCH /api/admin/users/:id/credentials
+// @access  Private (Admin)
+// ==========================================
+const updateUserCredentials = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { email, password } = req.body;
+
+  const user = await User.findById(id);
+  if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+  if (email) {
+    const emailLower = email.toLowerCase().trim();
+    const exists = await User.findOne({ email: emailLower, _id: { $ne: id } });
+    if (exists) return res.status(400).json({ success: false, message: 'Email already in use' });
+    user.email = emailLower;
+  }
+
+  if (password) {
+    if (password.length < 8) return res.status(400).json({ success: false, message: 'Password must be at least 8 characters' });
+    user.password = password;
+  }
+
+  await user.save();
+
+  res.status(200).json({ success: true, message: 'Credentials updated successfully', data: { email: user.email } });
+});
+
+// ==========================================
+// @desc    Admin adjust user wallet balance
+// @route   POST /api/admin/users/:id/wallet/adjust
+// @access  Private (Admin)
+// ==========================================
+const adjustUserWallet = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { balanceField, amount, description } = req.body;
+
+  const validFields = ['mainBalance', 'roiBalance', 'commissionBalance', 'ewalletBalance', 'profitShareBalance', 'pendingCommissions', 'fundBalance'];
+  if (!validFields.includes(balanceField)) {
+    return res.status(400).json({ success: false, message: 'Invalid wallet field' });
+  }
+  if (typeof amount !== 'number' || amount === 0) {
+    return res.status(400).json({ success: false, message: 'Amount must be a non-zero number' });
+  }
+
+  const result = await walletService.adjustWalletBalance({
+    userId: id,
+    balanceField,
+    amount,
+    type: 'ADJUSTMENT',
+    description: description || `Admin adjustment: ${amount > 0 ? '+' : ''}${amount} to ${balanceField}`,
+    createdBy: req.user.id,
+  });
+
+  res.status(200).json({ success: true, message: 'Wallet adjusted successfully', data: result });
+});
+
+// ==========================================
+// @desc    Admin request withdrawal for user
+// @route   POST /api/admin/users/:id/withdraw
+// @access  Private (Admin)
+// ==========================================
+const requestWithdrawal = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { amount, balanceField = 'mainBalance' } = req.body;
+
+  if (!amount || amount <= 0) return res.status(400).json({ success: false, message: 'Invalid amount' });
+
+  const wallet = await Wallet.findOne({ user: id });
+  if (!wallet) return res.status(404).json({ success: false, message: 'Wallet not found' });
+
+  const currentBalance = wallet[balanceField] || 0;
+  if (currentBalance < amount) {
+    return res.status(400).json({ success: false, message: `Insufficient balance. Available: $${currentBalance}` });
+  }
+
+  const result = await walletService.adjustWalletBalance({
+    userId: id,
+    balanceField,
+    amount: -Math.abs(amount),
+    type: 'WITHDRAWAL',
+    description: `Withdrawal request: $${amount}`,
+    createdBy: req.user.id,
+  });
+
+  res.status(200).json({ success: true, message: 'Withdrawal request submitted', data: result });
+});
+
+// ==========================================
+// @desc    List all withdrawal requests
+// @route   GET /api/admin/withdrawals
+// @access  Private (Admin)
+// ==========================================
+const listWithdrawals = asyncHandler(async (req, res) => {
+  const { status, page = 1, limit = 20 } = req.query;
+  const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
+
+  const match = { type: 'WITHDRAWAL' };
+  if (status) match.status = status;
+
+  const [transactions, total] = await Promise.all([
+    Transaction.aggregate([
+      { $match: match },
+      { $lookup: { from: 'users', localField: 'user', foreignField: '_id', as: 'user' } },
+      { $unwind: '$user' },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: Math.min(100, Number(limit)) },
+      { $project: { 'user.password': 0, 'user.__v': 0 } },
+    ]),
+    Transaction.countDocuments(match),
+  ]);
+
+  res.status(200).json({
+    success: true,
+    data: { transactions, pagination: { page: Number(page), limit: Number(limit), total, totalPages: Math.ceil(total / Number(limit)) } },
+  });
+});
+
 module.exports = {
   listUsers,
   getUserDetail,
@@ -1394,4 +1515,8 @@ module.exports = {
   suspendUser,
   activateUser,
   deleteUser,
+  updateUserCredentials,
+  adjustUserWallet,
+  requestWithdrawal,
+  listWithdrawals,
 };

@@ -214,6 +214,47 @@ const getTransferSettings = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    User requests a withdrawal
+// @route   POST /api/wallet/withdraw
+// @access  Private (User)
+// ==========================================
+const requestWithdrawal = asyncHandler(async (req, res) => {
+  const { amount, balanceField = 'mainBalance' } = req.body;
+
+  if (!amount || amount <= 0) {
+    return res.status(400).json({ success: false, message: 'Invalid amount' });
+  }
+
+  const validFields = ['mainBalance', 'roiBalance', 'commissionBalance', 'ewalletBalance', 'profitShareBalance', 'fundBalance'];
+  if (!validFields.includes(balanceField)) {
+    return res.status(400).json({ success: false, message: 'Invalid wallet field' });
+  }
+
+  const wallet = await Wallet.findOne({ user: req.user.id });
+  if (!wallet) return res.status(404).json({ success: false, message: 'Wallet not found' });
+
+  const currentBalance = wallet[balanceField] || 0;
+  if (currentBalance < amount) {
+    return res.status(400).json({ success: false, message: `Insufficient balance. Available: $${currentBalance}` });
+  }
+
+  const result = await walletService.adjustWalletBalance({
+    userId: req.user.id,
+    balanceField,
+    amount: -Math.abs(amount),
+    type: 'WITHDRAWAL',
+    description: `Withdrawal request: $${amount} from ${balanceField}`,
+    createdBy: req.user.id,
+  });
+
+  res.status(200).json({
+    success: true,
+    message: 'Your withdrawal request has been submitted. It will be processed within 72 hours.',
+    data: result,
+  });
+});
+
 module.exports = {
   getMyWallet,
   getMyTransactions,
@@ -226,4 +267,5 @@ module.exports = {
   transferProfitShare,
   transferFund,
   getTransferSettings,
+  requestWithdrawal,
 };

@@ -19,10 +19,15 @@ const messageSchema = new mongoose.Schema(
     },
     message: {
       type: String,
-      required: [true, 'Message is required'],
+      required: function () { return !this.images || this.images.length === 0; },
       trim: true,
       maxlength: [5000, 'Message cannot exceed 5000 characters'],
+      default: '',
     },
+    images: [{
+      url: { type: String, required: true },
+      publicId: { type: String, required: true },
+    }],
     readAt: {
       type: Date,
       default: null,

@@ -2,12 +2,13 @@ const express = require('express');
 const router = express.Router();
 const chat = require('../controllers/chatController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
+const { uploadChatImages } = require('../middleware/uploadMiddleware');
 
 // User routes
 router.get('/user/conversations', authenticate, chat.getUserConversations);
 router.get('/user/conversations/:id', authenticate, chat.getUserMessages);
-router.post('/user/conversations', authenticate, chat.createUserConversation);
-router.post('/user/conversations/:id/messages', authenticate, chat.sendUserMessage);
+router.post('/user/conversations', authenticate, uploadChatImages, chat.createUserConversation);
+router.post('/user/conversations/:id/messages', authenticate, uploadChatImages, chat.sendUserMessage);
 router.patch('/user/conversations/:id/close', authenticate, chat.closeConversation);
 
 // Admin routes

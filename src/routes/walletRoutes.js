@@ -13,6 +13,7 @@ const {
   transferProfitShare,
   transferFund,
   getTransferSettings,
+  requestWithdrawal,
 } = require('../controllers/walletController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
@@ -43,6 +44,9 @@ router.post('/transfer/profit-share', authenticate, transferProfitShare);
 
 // @route   POST /api/wallet/transfer/fund
 router.post('/transfer/fund', authenticate, transferFund);
+
+// @route   POST /api/wallet/withdraw
+router.post('/withdraw', authenticate, requestWithdrawal);
 
 // ==========================================
 // ADMIN ROUTES (deposit approval workflow)
