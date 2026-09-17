@@ -10,7 +10,7 @@ const roiService = require('../services/roiService');
 const walletService = require('../services/walletService');
 const { roundToTwoDecimals } = require('../services/walletService');
 const bonusService = require('../services/bonusService');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 
 // ==========================================
 // @desc    List all users (admin only)
