@@ -122,6 +122,13 @@ const walletSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    // Number of times the user has completed a full 2X ROI cycle.
+    cycle2xCompletions: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,

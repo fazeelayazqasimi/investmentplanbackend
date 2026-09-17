@@ -218,9 +218,21 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
       await freshInvestment.save({ session });
 
       // Update wallet-level tracking
+      const walletTotalMaxReturn = wallet.totalMaxReturn || 0;
+      const walletReturnedBefore = wallet.totalReturned || 0;
       wallet.totalRoiEarned = roundToTwoDecimals((wallet.totalRoiEarned || 0) + finalAppliedRoi);
       wallet.totalReturned = roundToTwoDecimals((wallet.totalReturned || 0) + finalAppliedRoi);
       wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + finalAppliedRoi);
+
+      // Detect 2X cycle completion at wallet level
+      if (walletTotalMaxReturn > 0 && finalAppliedRoi > 0) {
+        const wasBelow = walletReturnedBefore < walletTotalMaxReturn;
+        const isAtOrAbove = wallet.totalReturned >= walletTotalMaxReturn;
+        if (wasBelow && isAtOrAbove) {
+          wallet.cycle2xCompletions = (wallet.cycle2xCompletions || 0) + 1;
+        }
+      }
+
       await wallet.save({ session });
 
       // Create the ROI ledger record
@@ -531,6 +543,18 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
       wallet.totalRoiEarned = roundToTwoDecimals((wallet.totalRoiEarned || 0) + finalAppliedRoi);
       wallet.totalReturned = roundToTwoDecimals((wallet.totalReturned || 0) + finalAppliedRoi);
       wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + finalAppliedRoi);
+
+      // Detect 2X cycle completion at wallet level
+      const walletTotalMaxReturn2 = wallet.totalMaxReturn || 0;
+      const walletReturnedBefore2 = wallet.totalReturned - finalAppliedRoi;
+      if (walletTotalMaxReturn2 > 0 && finalAppliedRoi > 0) {
+        const wasBelow2 = walletReturnedBefore2 < walletTotalMaxReturn2;
+        const isAtOrAbove2 = wallet.totalReturned >= walletTotalMaxReturn2;
+        if (wasBelow2 && isAtOrAbove2) {
+          wallet.cycle2xCompletions = (wallet.cycle2xCompletions || 0) + 1;
+        }
+      }
+
       await wallet.save({ session });
 
       const records = await ROIHistory.create(

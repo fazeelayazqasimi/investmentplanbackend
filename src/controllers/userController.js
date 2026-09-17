@@ -101,6 +101,7 @@ const getProgressData = asyncHandler(async (req, res) => {
   const totalEarnings = wallet ? (wallet.totalEarnings || 0) : 0;
   const ownInvestment = wallet ? (wallet.totalInvestmentAmount || 0) : 0;
   const totalEligibleEarnings = wallet ? (wallet.totalEligibleEarnings || 0) : 0;
+  const cycle2xCompletions = wallet ? (wallet.cycle2xCompletions || 0) : 0;
 
   // 2X Milestone: ROI cap (total investment * 2)
   const milestone2x = totalMaxReturn;
@@ -148,6 +149,7 @@ const getProgressData = asyncHandler(async (req, res) => {
       progress2x,
       remaining2x,
       percentage2x,
+      cycle2xCompletions,
       milestone3x,
       progress3x,
       remaining3x,
