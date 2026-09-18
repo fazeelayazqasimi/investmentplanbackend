@@ -189,8 +189,20 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      // If nothing to distribute, skip
+      // If nothing to distribute, check if it's due to 3X cap
       if (finalAppliedRoi <= 0) {
+        // 3X cap reached — mark this investment as COMPLETED
+        if (freshInvestment.status === 'ACTIVE') {
+          freshInvestment.status = 'COMPLETED';
+          freshInvestment.completionDate = new Date();
+          await freshInvestment.save({ session });
+        }
+        // Also mark ALL active investments as COMPLETED (3X is global cap)
+        await Investment.updateMany(
+          { user: freshInvestment.user, status: 'ACTIVE' },
+          { status: 'COMPLETED', completionDate: new Date() },
+          { session }
+        );
         return;
       }
 
@@ -523,6 +535,18 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
       if (finalAppliedRoi <= 0 && overflowToPending <= 0) {
+        // 3X cap reached — mark this investment as COMPLETED
+        if (freshInvestment.status === 'ACTIVE') {
+          freshInvestment.status = 'COMPLETED';
+          freshInvestment.completionDate = new Date();
+          await freshInvestment.save({ session });
+        }
+        // Also mark ALL active investments as COMPLETED (3X is global cap)
+        await Investment.updateMany(
+          { user: freshInvestment.user, status: 'ACTIVE' },
+          { status: 'COMPLETED', completionDate: new Date() },
+          { session }
+        );
         return;
       }
 
