@@ -194,6 +194,19 @@ const systemSettingsSchema = new mongoose.Schema(
       percentage: { type: Number, default: 0, min: 0, max: 100 },
     }],
 
+    // ==========================================
+    // RANK SETTINGS
+    // ==========================================
+    rankEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    rankRecalculationTrigger: {
+      type: String,
+      enum: ['AUTO', 'MANUAL', 'LOGIN'],
+      default: 'AUTO',
+    },
+
   },
   {
     timestamps: true,

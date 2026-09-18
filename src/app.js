@@ -98,6 +98,7 @@ app.use('/api/bank-accounts', require('./routes/bankAccountRoutes'));
 app.use('/api/admin', require('./routes/adminRoutes'));
 app.use('/api/announcements', require('./routes/announcementRoutes'));
 app.use('/api/chat', require('./routes/chatRoutes'));
+app.use('/api/ranks', require('./routes/rankRoutes'));
 
 // ==========================================
 // 404 HANDLER (for undefined routes)

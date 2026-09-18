@@ -63,6 +63,11 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    currentRank: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Rank',
+      default: null,
+    },
   },
   {
     timestamps: true,
