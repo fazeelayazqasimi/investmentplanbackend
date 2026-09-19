@@ -135,9 +135,9 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         wallet = created[0];
       }
 
-      // Per-investment 2X cap — ROI stops completely, no pending overflow
-      const totalMaxReturn = freshInvestment.maxReturnAmount; // already = originalAmount * 2
-      const totalReturned = freshInvestment.totalReturned || 0;
+      // Global 2X cap — ROI stops when total ROI earned >= totalInvestmentAmount * 2
+      const totalMaxReturn = roundToTwoDecimals((wallet.totalInvestmentAmount || 0) * 2);
+      const totalReturned = wallet.totalRoiEarned || 0;
 
       const rawRoiAmount = roundToTwoDecimals(
         (freshInvestment.originalAmount * percentage) / 100
@@ -189,20 +189,8 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      // If nothing to distribute, check if it's due to 3X cap
+      // If nothing to distribute — ROI stops, investment stays ACTIVE
       if (finalAppliedRoi <= 0) {
-        // 3X cap reached — mark this investment as COMPLETED
-        if (freshInvestment.status === 'ACTIVE') {
-          freshInvestment.status = 'COMPLETED';
-          freshInvestment.completionDate = new Date();
-          await freshInvestment.save({ session });
-        }
-        // Also mark ALL active investments as COMPLETED (3X is global cap)
-        await Investment.updateMany(
-          { user: freshInvestment.user, status: 'ACTIVE' },
-          { status: 'COMPLETED', completionDate: new Date() },
-          { session }
-        );
         return;
       }
 
@@ -212,7 +200,6 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
       const newRemainingReturn = roundToTwoDecimals(
         Math.max(0, totalMaxReturn - newTotalReturned)
       );
-      const isNowComplete = newTotalReturned >= totalMaxReturn;
 
       // Update the investment record (for display/history purposes)
       freshInvestment.totalRoiEarned = roundToTwoDecimals(
@@ -221,11 +208,6 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
       freshInvestment.totalReturned = roundToTwoDecimals(
         freshInvestment.totalReturned + finalAppliedRoi
       );
-
-      if (isNowComplete) {
-        freshInvestment.status = 'COMPLETED';
-        freshInvestment.completionDate = new Date();
-      }
 
       await freshInvestment.save({ session });
 
@@ -491,76 +473,53 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
         wallet = created[0];
       }
 
-      // 2X cap enforcement
-      const totalMaxReturn = freshInvestment.maxReturnAmount;
-      const totalReturned = freshInvestment.totalReturned || 0;
+      // Global 2X cap enforcement
+      const totalMaxReturn = roundToTwoDecimals((wallet.totalInvestmentAmount || 0) * 2);
+      const totalReturned = wallet.totalRoiEarned || 0;
       const previousTotalReturned = totalReturned;
       const remainingBeforeThisRoi = roundToTwoDecimals(totalMaxReturn - previousTotalReturned);
 
       let appliedRoiAmount = rawRoiAmount;
-      let pendingRoiAmount = 0;
       let status = 'SUCCESS';
 
       if (rawRoiAmount > remainingBeforeThisRoi && remainingBeforeThisRoi > 0) {
         appliedRoiAmount = remainingBeforeThisRoi;
-        pendingRoiAmount = roundToTwoDecimals(rawRoiAmount - remainingBeforeThisRoi);
         status = 'CAPPED';
       } else if (remainingBeforeThisRoi <= 0) {
         appliedRoiAmount = 0;
-        pendingRoiAmount = rawRoiAmount;
         status = 'CAPPED';
       }
 
       appliedRoiAmount = roundToTwoDecimals(Math.max(0, appliedRoiAmount));
 
       // 3X cap enforcement
-      const eligibleBase = wallet.eligibleInvestmentBase || 0;
+      const ownInvestment = wallet.totalInvestmentAmount || 0;
       const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
-      const cap3x = roundToTwoDecimals(eligibleBase * 3);
+      const cap3x = roundToTwoDecimals(ownInvestment * 3);
 
       let finalAppliedRoi = appliedRoiAmount;
-      let overflowToPending = roundToTwoDecimals(pendingRoiAmount);
 
-      if (eligibleBase > 0 && appliedRoiAmount > 0) {
+      if (ownInvestment > 0 && appliedRoiAmount > 0) {
         const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
         if (remaining3x <= 0) {
-          overflowToPending = roundToTwoDecimals(overflowToPending + appliedRoiAmount);
           finalAppliedRoi = 0;
         } else if (appliedRoiAmount > remaining3x) {
-          overflowToPending = roundToTwoDecimals(overflowToPending + (appliedRoiAmount - remaining3x));
           finalAppliedRoi = remaining3x;
         }
       }
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      if (finalAppliedRoi <= 0 && overflowToPending <= 0) {
-        // 3X cap reached — mark this investment as COMPLETED
-        if (freshInvestment.status === 'ACTIVE') {
-          freshInvestment.status = 'COMPLETED';
-          freshInvestment.completionDate = new Date();
-          await freshInvestment.save({ session });
-        }
-        // Also mark ALL active investments as COMPLETED (3X is global cap)
-        await Investment.updateMany(
-          { user: freshInvestment.user, status: 'ACTIVE' },
-          { status: 'COMPLETED', completionDate: new Date() },
-          { session }
-        );
+      // If nothing to distribute — ROI stops, investment stays ACTIVE
+      if (finalAppliedRoi <= 0) {
         return;
       }
 
       const newTotalReturned = roundToTwoDecimals(previousTotalReturned + finalAppliedRoi);
       const newRemainingReturn = roundToTwoDecimals(Math.max(0, totalMaxReturn - newTotalReturned));
-      const isNowComplete = newTotalReturned >= totalMaxReturn;
 
       freshInvestment.totalRoiEarned = roundToTwoDecimals(freshInvestment.totalRoiEarned + finalAppliedRoi);
       freshInvestment.totalReturned = roundToTwoDecimals(freshInvestment.totalReturned + finalAppliedRoi);
-
-      if (isNowComplete) {
-        freshInvestment.status = 'COMPLETED';
-        freshInvestment.completionDate = new Date();
-      }
 
       await freshInvestment.save({ session });
 
@@ -624,35 +583,6 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
           session,
           freshInvestment._id
         );
-      }
-
-      if (pendingRoiAmount > 0) {
-        await walletService.adjustWalletBalance({
-          userId: freshInvestment.user,
-          balanceField: 'pendingCommissions',
-          amount: pendingRoiAmount,
-          type: 'PENDING_ROI',
-          investmentId: freshInvestment._id,
-          description: `Pending ROI (2X cap overflow) manual on ${roiDate.toISOString().split('T')[0]} - $${pendingRoiAmount}`,
-          reference: createdRecord._id.toString(),
-          createdBy: null,
-          session,
-        });
-      }
-
-      const network3xOverflow = roundToTwoDecimals(overflowToPending - pendingRoiAmount);
-      if (network3xOverflow > 0) {
-        await walletService.adjustWalletBalance({
-          userId: freshInvestment.user,
-          balanceField: 'pendingCommissions',
-          amount: network3xOverflow,
-          type: 'PENDING_NETWORK_COMMISSION',
-          investmentId: freshInvestment._id,
-          description: `Pending ROI (3X global cap overflow) manual on ${roiDate.toISOString().split('T')[0]} - $${network3xOverflow}`,
-          reference: createdRecord._id.toString(),
-          createdBy: null,
-          session,
-        });
       }
 
       result = { appliedRoiAmount: finalAppliedRoi, status };

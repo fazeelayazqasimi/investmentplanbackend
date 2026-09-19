@@ -14,6 +14,7 @@ const {
   transferFund,
   getTransferSettings,
   requestWithdrawal,
+  getPendingCommissionDetails,
 } = require('../controllers/walletController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
 
@@ -29,6 +30,9 @@ router.get('/transfer-settings', authenticate, getTransferSettings);
 
 // @route   GET /api/wallet/transactions
 router.get('/transactions', authenticate, getMyTransactions);
+
+// @route   GET /api/wallet/pending-commissions
+router.get('/pending-commissions', authenticate, getPendingCommissionDetails);
 
 // @route   POST /api/wallet/deposit  (user submits a deposit request)
 router.post('/deposit', authenticate, requestDeposit);

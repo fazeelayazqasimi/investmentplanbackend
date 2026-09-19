@@ -206,6 +206,10 @@ const createInvestment = async ({
       }
       userWallet.totalInvestmentAmount = roundToTwoDecimals((userWallet.totalInvestmentAmount || 0) + roundedAmount);
       userWallet.totalMaxReturn = roundToTwoDecimals(userWallet.totalInvestmentAmount * 2);
+      // Reset progress on reinvestment — fresh cycle starts
+      userWallet.totalRoiEarned = 0;
+      userWallet.totalReturned = 0;
+      userWallet.totalEligibleEarnings = 0;
       await userWallet.save({ session });
 
       // Pause all previous ACTIVE investments — each cycle runs independently
@@ -214,41 +218,6 @@ const createInvestment = async ({
         { $set: { status: 'PAUSED' } },
         { session }
       );
-
-      // Auto-release pending 3X overflow on new investment
-      const pendingAmount = userWallet.pendingCommissions || 0;
-      if (pendingAmount > 0) {
-        const newCap3x = roundToTwoDecimals(userWallet.totalInvestmentAmount * 3);
-        const room = roundToTwoDecimals(Math.max(0, newCap3x - userWallet.totalEligibleEarnings));
-        const releaseAmount = roundToTwoDecimals(Math.min(pendingAmount, room));
-
-        if (releaseAmount > 0) {
-          await walletService.adjustWalletBalance({
-            userId: targetUserId,
-            balanceField: 'pendingCommissions',
-            amount: -releaseAmount,
-            type: 'PENDING_RELEASE',
-            description: `Pending released - $${releaseAmount} (new investment expanded 3X cap)`,
-            createdBy: createdByUserId,
-            session,
-          });
-          await walletService.adjustWalletBalance({
-            userId: targetUserId,
-            balanceField: 'mainBalance',
-            amount: releaseAmount,
-            type: 'PENDING_RELEASE',
-            description: `Released from pending - $${releaseAmount}`,
-            createdBy: createdByUserId,
-            session,
-          });
-
-          // Update totalEligibleEarnings so released amount counts in 3X cap tracking
-          userWallet.totalEligibleEarnings = roundToTwoDecimals(
-            (userWallet.totalEligibleEarnings || 0) + releaseAmount
-          );
-          await userWallet.save({ session });
-        }
-      }
 
       // --- LEVEL INCOME (all configured levels) ---
       // Traverse upline chain for every configured level in settings.levels.
@@ -516,42 +485,11 @@ const createDownlineInvestmentWithEwallet = async ({
       }
       receiverWallet.totalInvestmentAmount = roundToTwoDecimals((receiverWallet.totalInvestmentAmount || 0) + roundedAmount);
       receiverWallet.totalMaxReturn = roundToTwoDecimals(receiverWallet.totalInvestmentAmount * 2);
+      // Reset progress on reinvestment — fresh cycle starts
+      receiverWallet.totalRoiEarned = 0;
+      receiverWallet.totalReturned = 0;
+      receiverWallet.totalEligibleEarnings = 0;
       await receiverWallet.save({ session });
-
-      // Auto-release pending 3X overflow on new investment
-      const receiverPendingAmount = receiverWallet.pendingCommissions || 0;
-      if (receiverPendingAmount > 0) {
-        const newCap3x = roundToTwoDecimals(receiverWallet.totalInvestmentAmount * 3);
-        const room = roundToTwoDecimals(Math.max(0, newCap3x - receiverWallet.totalEligibleEarnings));
-        const releaseAmount = roundToTwoDecimals(Math.min(receiverPendingAmount, room));
-
-        if (releaseAmount > 0) {
-          await walletService.adjustWalletBalance({
-            userId: receiverId,
-            balanceField: 'pendingCommissions',
-            amount: -releaseAmount,
-            type: 'PENDING_RELEASE',
-            description: `Pending released - $${releaseAmount} (new investment expanded 3X cap)`,
-            createdBy: senderId,
-            session,
-          });
-          await walletService.adjustWalletBalance({
-            userId: receiverId,
-            balanceField: 'mainBalance',
-            amount: releaseAmount,
-            type: 'PENDING_RELEASE',
-            description: `Released from pending - $${releaseAmount}`,
-            createdBy: senderId,
-            session,
-          });
-
-          // Update totalEligibleEarnings so released amount counts in 3X cap tracking
-          receiverWallet.totalEligibleEarnings = roundToTwoDecimals(
-            (receiverWallet.totalEligibleEarnings || 0) + releaseAmount
-          );
-          await receiverWallet.save({ session });
-        }
-      }
 
       // --- LEVEL INCOME (all configured levels) for receiver's uplines ---
       if (receiver.referredBy) {

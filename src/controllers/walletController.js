@@ -2,6 +2,8 @@ const asyncHandler = require('express-async-handler');
 const walletService = require('../services/walletService');
 const Transaction = require('../models/Transaction');
 const SystemSettings = require('../models/SystemSettings');
+const User = require('../models/User');
+const Investment = require('../models/Investment');
 
 // ==========================================
 // @desc    Get logged-in user's wallet balances
@@ -255,6 +257,72 @@ const requestWithdrawal = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Get pending commission details (who it came from, type, etc.)
+// @route   GET /api/wallet/pending-commissions
+// @access  Private (User)
+// ==========================================
+const getPendingCommissionDetails = asyncHandler(async (req, res) => {
+  const transactions = await Transaction.find({
+    user: req.user.id,
+    type: { $in: ['PENDING_ROI', 'PENDING_NETWORK_COMMISSION'] },
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  // Enrich with source user info and investment details
+  const enriched = await Promise.all(transactions.map(async (txn) => {
+    const result = { ...txn };
+
+    // If there's an investment reference, fetch investment details
+    if (txn.investment) {
+      const inv = await Investment.findById(txn.investment).select('originalAmount user').lean();
+      if (inv) {
+        result.investmentAmount = inv.originalAmount;
+        // Fetch the investor's name if it's someone else's investment generating income
+        if (inv.user && inv.user.toString() !== req.user.id.toString()) {
+          const investor = await User.findById(inv.user).select('name email').lean();
+          if (investor) {
+            result.sourceUser = { name: investor.name, email: investor.email };
+          }
+        }
+      }
+    }
+
+    // Use metadata if available (new transactions have this)
+    if (txn.metadata?.percentage) {
+      result.incomePercentage = txn.metadata.percentage;
+    }
+    if (txn.metadata?.investmentAmount) {
+      result.sourceInvestmentAmount = txn.metadata.investmentAmount;
+    }
+    if (txn.metadata?.incomeType) {
+      result.incomeType = txn.metadata.incomeType;
+    }
+
+    // Parse description for additional context (fallback for old transactions)
+    if (!result.incomeType) {
+      if (txn.description?.includes('profit share from ROI')) {
+        result.incomeType = 'PROFIT_SHARE_FROM_ROI';
+      } else if (txn.description?.includes('profit share')) {
+        result.incomeType = 'PROFIT_SHARE';
+      } else if (txn.description?.includes('network commission')) {
+        result.incomeType = 'NETWORK_COMMISSION';
+      } else if (txn.type === 'PENDING_ROI') {
+        result.incomeType = 'ROI_OVERFLOW';
+      }
+    }
+
+    return result;
+  }));
+
+  res.status(200).json({
+    success: true,
+    message: 'Pending commission details fetched successfully',
+    data: { pendingCommissions: enriched },
+  });
+});
+
 module.exports = {
   getMyWallet,
   getMyTransactions,
@@ -268,4 +336,5 @@ module.exports = {
   transferFund,
   getTransferSettings,
   requestWithdrawal,
+  getPendingCommissionDetails,
 };

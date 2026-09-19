@@ -189,6 +189,8 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
         description: `Pending network commission (3X cap overflow) - $${pendingCredited}`,
         reference: null,
         createdBy: null,
+        investmentId,
+        metadata: { investmentAmount, percentage, incomeType: 'DIRECT_INCOME' },
         session,
       });
       pendingTransaction = pendingResult.transaction;
@@ -307,6 +309,8 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
         description: `Pending network commission (3X cap overflow) - $${pendingCredited}`,
         reference: null,
         createdBy: null,
+        investmentId,
+        metadata: { investmentAmount, percentage, incomeType: 'LEVEL_INCOME' },
         session,
       });
       pendingTransaction = pendingResult.transaction;
@@ -421,6 +425,8 @@ const creditLevelIncomeForLevel = async (level, uplineId, investmentAmount, sess
         description: `Pending network commission (3X cap overflow) - $${pendingCredited}`,
         reference: null,
         createdBy: null,
+        investmentId,
+        metadata: { investmentAmount, percentage, incomeType: 'LEVEL_INCOME', level },
         session,
       });
       pendingTransaction = pendingResult.transaction;
@@ -576,6 +582,7 @@ const distributeProfitShare = async (totalAmount, adminId) => {
             description: `Pending profit share (3X cap overflow) - $${pendingAmount}`,
             reference: `dist_${Date.now()}`,
             createdBy: adminId,
+            metadata: { incomeType: 'PROFIT_SHARE', details },
             session,
           });
         }
@@ -690,6 +697,8 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
         description: `Pending profit share from ROI (3X cap overflow) - $${pendingAmount}`,
         reference: investmentId ? investmentId.toString() : null,
         createdBy: null,
+        investmentId,
+        metadata: { incomeType: 'PROFIT_SHARE_FROM_ROI', percentage: psLevel.percentage },
         session,
       });
     }

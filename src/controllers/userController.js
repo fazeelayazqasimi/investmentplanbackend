@@ -4,7 +4,6 @@ const referralService = require('../services/referralService');
 const SystemSettings = require('../models/SystemSettings');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
-const Investment = require('../models/Investment');
 
 // ==========================================
 // @desc    Get logged-in user's profile
@@ -96,50 +95,21 @@ const getProgressData = asyncHandler(async (req, res) => {
   const wallet = await Wallet.findOne({ user: req.user.id });
 
   const totalInvestment = wallet ? (wallet.totalInvestmentAmount || 0) : 0;
-  const totalMaxReturn = wallet ? (wallet.totalMaxReturn || 0) : 0;
-  const totalReturned = wallet ? (wallet.totalReturned || 0) : 0;
-  const totalEarnings = wallet ? (wallet.totalEarnings || 0) : 0;
-  const ownInvestment = wallet ? (wallet.totalInvestmentAmount || 0) : 0;
+  const totalRoiEarned = wallet ? (wallet.totalRoiEarned || 0) : 0;
   const totalEligibleEarnings = wallet ? (wallet.totalEligibleEarnings || 0) : 0;
   const cycle2xCompletions = wallet ? (wallet.cycle2xCompletions || 0) : 0;
 
-  // 2X Milestone: ROI cap (total investment * 2)
-  const milestone2x = totalMaxReturn;
-  const progress2x = totalReturned;
+  // 2X Milestone: ROI cap (total investment * 2) — GLOBAL
+  const milestone2x = totalInvestment * 2;
+  const progress2x = totalRoiEarned;
   const remaining2x = Math.max(0, milestone2x - progress2x);
   const percentage2x = milestone2x > 0 ? Math.min(100, Math.round((progress2x / milestone2x) * 100)) : 0;
 
-  // 3X Milestone: Total earnings cap (own investment * 3)
-  const milestone3x = ownInvestment * 3;
+  // 3X Milestone: Total earnings cap (total investment * 3) — GLOBAL
+  const milestone3x = totalInvestment * 3;
   const progress3x = totalEligibleEarnings;
   const remaining3x = Math.max(0, milestone3x - progress3x);
   const percentage3x = milestone3x > 0 ? Math.min(100, Math.round((progress3x / milestone3x) * 100)) : 0;
-
-  // Per-investment 2X progress
-  const investments = await Investment.find({ user: req.user.id })
-    .sort({ createdAt: -1 })
-    .select('originalAmount maxReturnAmount totalReturned totalRoiEarned status startDate completionDate roiPercentage')
-    .lean();
-
-  const investmentProgress = investments.map(inv => {
-    const maxReturn = inv.maxReturnAmount || inv.originalAmount * 2;
-    const returned = inv.totalReturned || 0;
-    const remaining = Math.max(0, maxReturn - returned);
-    const pct = maxReturn > 0 ? Math.min(100, Math.round((returned / maxReturn) * 100)) : 0;
-    return {
-      _id: inv._id,
-      originalAmount: inv.originalAmount,
-      maxReturnAmount: maxReturn,
-      totalReturned: returned,
-      totalRoiEarned: inv.totalRoiEarned || 0,
-      status: inv.status,
-      percentage2x: pct,
-      remaining2x: remaining,
-      startDate: inv.startDate,
-      completionDate: inv.completionDate,
-      roiPercentage: inv.roiPercentage,
-    };
-  });
 
   res.status(200).json({
     success: true,
@@ -154,8 +124,6 @@ const getProgressData = asyncHandler(async (req, res) => {
       progress3x,
       remaining3x,
       percentage3x,
-      totalEarnings,
-      investments: investmentProgress,
     },
   });
 });
