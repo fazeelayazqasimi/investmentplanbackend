@@ -197,8 +197,8 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
     }
   }
 
-  // Update tracking fields atomically — only ACTUALLY CREDITED amount counts
-  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
+  // Update tracking fields — full income counts toward 3X (main + pending)
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
   await wallet.save({ session });
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
@@ -317,8 +317,8 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
     }
   }
 
-  // Update tracking fields atomically — only ACTUALLY CREDITED amount counts
-  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
+  // Update tracking fields — full income counts toward 3X (main + pending)
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
   wallet.eligibleInvestmentBase = newBase;
   await wallet.save({ session });
 
@@ -433,8 +433,8 @@ const creditLevelIncomeForLevel = async (level, uplineId, investmentAmount, sess
     }
   }
 
-  // Update tracking fields atomically — only ACTUALLY CREDITED amount counts
-  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
+  // Update tracking fields — full income counts toward 3X (main + pending)
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
   await wallet.save({ session });
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
