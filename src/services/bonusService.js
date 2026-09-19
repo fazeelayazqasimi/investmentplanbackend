@@ -58,6 +58,11 @@ const processRegistrationBonuses = async (userId, uplineId, session) => {
       session,
     });
     userBonus = result.transaction;
+    const userWallet = await Wallet.findOne({ user: userId }).session(session);
+    if (userWallet) {
+      userWallet.totalEligibleEarnings = roundToTwoDecimals((userWallet.totalEligibleEarnings || 0) + settings.signupBonusAmount);
+      await userWallet.save({ session });
+    }
   }
 
   // --- Upline bonus for referrer ---
@@ -81,6 +86,11 @@ const processRegistrationBonuses = async (userId, uplineId, session) => {
         session,
       });
       uplineBonus = result.transaction;
+      const uplineWallet = await Wallet.findOne({ user: uplineId }).session(session);
+      if (uplineWallet) {
+        uplineWallet.totalEligibleEarnings = roundToTwoDecimals((uplineWallet.totalEligibleEarnings || 0) + settings.uplineSignupBonusAmount);
+        await uplineWallet.save({ session });
+      }
     }
   }
 

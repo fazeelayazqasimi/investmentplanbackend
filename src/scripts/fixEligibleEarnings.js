@@ -7,36 +7,34 @@ mongoose.connect(process.env.MONGO_URI).then(async () => {
   const transactionsCol = db.collection('transactions');
 
   const wallets = await walletsCol.find({}).toArray();
-  console.log(`Found ${wallets.length} wallets to check`);
+  console.log(`Found ${wallets.length} wallets to fix`);
 
+  const eligibleTypes = ['DIRECT_INCOME', 'LEVEL_INCOME', 'ROI', 'PROFIT_SHARE', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS'];
   let updated = 0;
 
   for (const wallet of wallets) {
     const userId = wallet.user;
 
-    // Find all PENDING_RELEASE transactions that credited mainBalance (positive amount)
-    const releaseTxs = await transactionsCol
+    const eligibleTxs = await transactionsCol
       .find({
         user: userId,
-        type: 'PENDING_RELEASE',
-        amount: { $gt: 0 },
+        type: { $in: eligibleTypes },
         status: 'COMPLETED',
       })
+      .project({ amount: 1 })
       .toArray();
 
-    if (releaseTxs.length === 0) continue;
+    const totalEligible = eligibleTxs.reduce((s, t) => s + (t.amount || 0), 0);
+    const rounded = Math.round(totalEligible * 100) / 100;
+    const current = wallet.totalEligibleEarnings || 0;
 
-    const totalReleased = releaseTxs.reduce((sum, tx) => sum + tx.amount, 0);
-    const currentEligible = wallet.totalEligibleEarnings || 0;
-    const newEligible = Math.round((currentEligible + totalReleased) * 100) / 100;
-
-    if (newEligible !== currentEligible) {
+    if (Math.abs(rounded - current) > 0.01) {
       await walletsCol.updateOne(
         { _id: wallet._id },
-        { $set: { totalEligibleEarnings: newEligible } }
+        { $set: { totalEligibleEarnings: rounded } }
       );
       console.log(
-        `User ${userId}: totalEligibleEarnings ${currentEligible} -> ${newEligible} (${releaseTxs.length} releases, +$${totalReleased})`
+        `User ${userId}: totalEligibleEarnings ${current} -> ${rounded} (${eligibleTxs.length} eligible txs)`
       );
       updated++;
     }
