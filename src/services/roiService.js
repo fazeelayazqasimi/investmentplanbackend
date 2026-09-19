@@ -189,8 +189,13 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      // If nothing to distribute — ROI stops, investment stays ACTIVE
+      // If nothing to distribute — ROI cap hit, pause investment
       if (finalAppliedRoi <= 0) {
+        await Investment.updateOne(
+          { _id: freshInvestment._id },
+          { $set: { status: 'PAUSED' } },
+          { session }
+        );
         return;
       }
 
@@ -224,6 +229,12 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         const isAtOrAbove = wallet.totalReturned >= walletTotalMaxReturn;
         if (wasBelow && isAtOrAbove) {
           wallet.cycle2xCompletions = (wallet.cycle2xCompletions || 0) + 1;
+          // Pause all active investments — 2X cap hit
+          await Investment.updateMany(
+            { user: freshInvestment.user, status: 'ACTIVE' },
+            { $set: { status: 'PAUSED' } },
+            { session }
+          );
         }
       }
 
@@ -510,8 +521,13 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      // If nothing to distribute — ROI stops, investment stays ACTIVE
+      // If nothing to distribute — ROI cap hit, pause investment
       if (finalAppliedRoi <= 0) {
+        await Investment.updateOne(
+          { _id: freshInvestment._id },
+          { $set: { status: 'PAUSED' } },
+          { session }
+        );
         return;
       }
 
@@ -535,6 +551,12 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
         const isAtOrAbove2 = wallet.totalReturned >= walletTotalMaxReturn2;
         if (wasBelow2 && isAtOrAbove2) {
           wallet.cycle2xCompletions = (wallet.cycle2xCompletions || 0) + 1;
+          // Pause all active investments — 2X cap hit
+          await Investment.updateMany(
+            { user: freshInvestment.user, status: 'ACTIVE' },
+            { $set: { status: 'PAUSED' } },
+            { session }
+          );
         }
       }
 

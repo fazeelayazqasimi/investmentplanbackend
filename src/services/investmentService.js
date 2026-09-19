@@ -204,20 +204,20 @@ const createInvestment = async ({
         const created = await Wallet.create([{ user: targetUserId }], { session });
         userWallet = created[0];
       }
-      userWallet.totalInvestmentAmount = roundToTwoDecimals((userWallet.totalInvestmentAmount || 0) + roundedAmount);
-      userWallet.totalMaxReturn = roundToTwoDecimals(userWallet.totalInvestmentAmount * 2);
+
+      // Count ALL ACTIVE investments (don't pause - old ones stay active)
+      const activeInvs = await Investment.find({
+        user: targetUserId, status: 'ACTIVE'
+      }).select('originalAmount').session(session).lean();
+      const totalActive = activeInvs.reduce((s, i) => s + (i.originalAmount || 0), 0);
+
+      userWallet.totalInvestmentAmount = roundToTwoDecimals(totalActive);
+      userWallet.totalMaxReturn = roundToTwoDecimals(totalActive * 2);
       // Reset progress on reinvestment — fresh cycle starts
       userWallet.totalRoiEarned = 0;
       userWallet.totalReturned = 0;
       userWallet.totalEligibleEarnings = 0;
       await userWallet.save({ session });
-
-      // Pause all previous ACTIVE investments — each cycle runs independently
-      await Investment.updateMany(
-        { user: targetUserId, status: 'ACTIVE', _id: { $ne: investment[0]._id } },
-        { $set: { status: 'PAUSED' } },
-        { session }
-      );
 
       // --- LEVEL INCOME (all configured levels) ---
       // Traverse upline chain for every configured level in settings.levels.
@@ -483,8 +483,15 @@ const createDownlineInvestmentWithEwallet = async ({
         const created = await Wallet.create([{ user: receiverId }], { session });
         receiverWallet = created[0];
       }
-      receiverWallet.totalInvestmentAmount = roundToTwoDecimals((receiverWallet.totalInvestmentAmount || 0) + roundedAmount);
-      receiverWallet.totalMaxReturn = roundToTwoDecimals(receiverWallet.totalInvestmentAmount * 2);
+
+      // Count ALL ACTIVE investments (don't pause - old ones stay active)
+      const receiverActiveInvs = await Investment.find({
+        user: receiverId, status: 'ACTIVE'
+      }).select('originalAmount').session(session).lean();
+      const receiverTotalActive = receiverActiveInvs.reduce((s, i) => s + (i.originalAmount || 0), 0);
+
+      receiverWallet.totalInvestmentAmount = roundToTwoDecimals(receiverTotalActive);
+      receiverWallet.totalMaxReturn = roundToTwoDecimals(receiverTotalActive * 2);
       // Reset progress on reinvestment — fresh cycle starts
       receiverWallet.totalRoiEarned = 0;
       receiverWallet.totalReturned = 0;
