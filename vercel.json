@@ -8,8 +8,18 @@
   ],
   "routes": [
     {
+      "src": "/api/admin/cron/roi",
+      "dest": "api/index.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "api/index.js"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/admin/cron/roi",
+      "schedule": "0 4 * * *"
     }
   ]
 }

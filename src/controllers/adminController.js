@@ -1493,6 +1493,73 @@ const listWithdrawals = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Auto ROI trigger (Vercel Cron endpoint)
+// @route   GET /api/cron/roi
+// @access  CRON_SECRET header
+// ==========================================
+const triggerAutoRoi = asyncHandler(async (req, res) => {
+  const cronSecret = req.headers['x-vercel-cron-secret'] || req.headers['cron-secret'];
+  if (!process.env.CRON_SECRET || cronSecret !== process.env.CRON_SECRET) {
+    return res.status(401).json({ success: false, message: 'Unauthorized cron request' });
+  }
+
+  const settings = await SystemSettings.getSettings();
+  if (!settings.autoRoiEnabled) {
+    return res.status(200).json({ success: true, message: 'Auto ROI is disabled', data: null });
+  }
+  if (!settings.roiProcessingEnabled) {
+    return res.status(200).json({ success: true, message: 'ROI processing is disabled', data: null });
+  }
+
+  const result = await roiService.processAllActiveInvestments(new Date());
+
+  settings.lastAutoRoiRun = new Date();
+  await settings.save();
+
+  res.status(200).json({ success: true, message: 'Auto ROI completed', data: result });
+});
+
+// ==========================================
+// @desc    Get auto ROI settings
+// @route   GET /api/admin/settings/auto-roi
+// @access  Admin
+// ==========================================
+const getAutoRoiSettings = asyncHandler(async (req, res) => {
+  const settings = await SystemSettings.getSettings();
+  res.status(200).json({
+    success: true,
+    data: {
+      autoRoiEnabled: settings.autoRoiEnabled,
+      autoRoiTime: settings.autoRoiTime,
+      lastAutoRoiRun: settings.lastAutoRoiRun,
+    },
+  });
+});
+
+// ==========================================
+// @desc    Update auto ROI settings
+// @route   PUT /api/admin/settings/auto-roi
+// @access  Admin
+// ==========================================
+const updateAutoRoiSettings = asyncHandler(async (req, res) => {
+  const { autoRoiEnabled, autoRoiTime } = req.body;
+  const settings = await SystemSettings.getSettings();
+  if (autoRoiEnabled !== undefined) settings.autoRoiEnabled = autoRoiEnabled;
+  if (autoRoiTime !== undefined) settings.autoRoiTime = autoRoiTime;
+  settings.updatedBy = req.user.id;
+  await settings.save();
+  res.status(200).json({
+    success: true,
+    message: 'Auto ROI settings updated',
+    data: {
+      autoRoiEnabled: settings.autoRoiEnabled,
+      autoRoiTime: settings.autoRoiTime,
+      lastAutoRoiRun: settings.lastAutoRoiRun,
+    },
+  });
+});
+
 module.exports = {
   listUsers,
   getUserDetail,
@@ -1519,4 +1586,7 @@ module.exports = {
   adjustUserWallet,
   requestWithdrawal,
   listWithdrawals,
+  triggerAutoRoi,
+  getAutoRoiSettings,
+  updateAutoRoiSettings,
 };

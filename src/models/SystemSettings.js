@@ -32,6 +32,22 @@ const systemSettingsSchema = new mongoose.Schema(
       default: false, // ROI distribution off by default until admin explicitly enables it
     },
 
+    // ==========================================
+    // AUTO DAILY ROI (Vercel Cron)
+    // ==========================================
+    autoRoiEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    autoRoiTime: {
+      type: String,
+      default: '04:00',
+    },
+    lastAutoRoiRun: {
+      type: Date,
+      default: null,
+    },
+
     // Overall/default ROI percentage (used when roiMode === 'OVERALL')
     overallRoiPercentage: {
       type: Number,

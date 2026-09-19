@@ -27,8 +27,16 @@ const {
   adjustUserWallet,
   requestWithdrawal,
   listWithdrawals,
+  triggerAutoRoi,
+  getAutoRoiSettings,
+  updateAutoRoiSettings,
 } = require('../controllers/adminController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
+
+// ==========================================
+// CRON ENDPOINT — No admin auth, protected by CRON_SECRET header
+// ==========================================
+router.get('/cron/roi', triggerAutoRoi);
 
 // All admin routes require authentication + admin role
 router.use(authenticate, authorizeAdmin);
@@ -75,5 +83,9 @@ router.post('/roi/transfer', triggerRoiTransfer);
 // Profit Share
 router.post('/profit-share/distribute', distributeProfitShare);
 router.post('/profit-share/transfer', triggerProfitShareTransfer);
+
+// Auto ROI Settings
+router.get('/settings/auto-roi', getAutoRoiSettings);
+router.put('/settings/auto-roi', updateAutoRoiSettings);
 
 module.exports = router;
