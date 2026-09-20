@@ -339,6 +339,7 @@ const processAllActiveInvestments = async (forDate = new Date()) => {
   // For all users with pending commissions, check if pending can fit under 3X cap
   const wallets = await Wallet.find({ pendingCommissions: { $gt: 0 } });
   let releasedCount = 0;
+  const pendingMultiplier = settings.pendingReleaseMultiplier || 3;
 
   for (const wallet of wallets) {
     const cap3x = roundToTwoDecimals((wallet.totalInvestmentAmount || 0) * 3);
@@ -347,10 +348,13 @@ const processAllActiveInvestments = async (forDate = new Date()) => {
     const pending = wallet.pendingCommissions || 0;
 
     if (pending > 0 && remaining > 0) {
-      const releaseAmount = roundToTwoDecimals(Math.min(pending, remaining));
+      const totalInv = wallet.totalInvestmentAmount || 0;
+      const maxFromPending = roundToTwoDecimals(totalInv * pendingMultiplier);
+      const releaseAmount = roundToTwoDecimals(Math.min(pending, maxFromPending, remaining));
       if (releaseAmount > 0) {
         wallet.pendingCommissions = roundToTwoDecimals(pending - releaseAmount);
         wallet.mainBalance = roundToTwoDecimals((wallet.mainBalance || 0) + releaseAmount);
+        wallet.totalEligibleEarnings = roundToTwoDecimals(eligible + releaseAmount);
         await wallet.save();
         await Transaction.create({
           user: wallet.user,
@@ -358,7 +362,7 @@ const processAllActiveInvestments = async (forDate = new Date()) => {
           amount: releaseAmount,
           balanceBefore: roundToTwoDecimals(pending),
           balanceAfter: roundToTwoDecimals(wallet.pendingCommissions),
-          description: `Auto-released pending to main - $${releaseAmount} (remaining cap: $${remaining})`,
+          description: `Auto-released pending to main - $${releaseAmount} (${pendingMultiplier}× total investment $${totalInv}, remaining cap: $${remaining})`,
           status: 'COMPLETED',
         });
         releasedCount++;

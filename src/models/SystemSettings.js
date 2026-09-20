@@ -211,6 +211,16 @@ const systemSettingsSchema = new mongoose.Schema(
     }],
 
     // ==========================================
+    // PENDING RELEASE SETTINGS
+    // ==========================================
+    pendingReleaseMultiplier: {
+      type: Number,
+      default: 3,
+      min: [0, 'Pending release multiplier cannot be negative'],
+      max: [100, 'Pending release multiplier cannot exceed 100'],
+    },
+
+    // ==========================================
     // RANK SETTINGS
     // ==========================================
     rankEnabled: {

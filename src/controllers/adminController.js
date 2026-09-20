@@ -550,6 +550,8 @@ const updateSettings = asyncHandler(async (req, res) => {
     'fundTransferEnabled',
     // Day-wise ROI
     'roiDays',
+    // Pending Release
+    'pendingReleaseMultiplier',
   ];
   allowedScalars.forEach((key) => {
     if (body[key] !== undefined) settings[key] = body[key];
