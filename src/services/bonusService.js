@@ -209,7 +209,6 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
 
   // Update tracking fields — full income counts toward 3X (main + pending)
   wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
-  wallet.eligibleInvestmentBase = roundToTwoDecimals((wallet.eligibleInvestmentBase || 0) + investmentAmount);
   await wallet.save({ session });
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
@@ -261,11 +260,10 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
     wallet = created[0];
   }
 
-  // Unified 3X earnings cap enforcement
+  // Unified 3X earnings cap enforcement — cap based on user's own investment
   const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
-  const currentBase = wallet.eligibleInvestmentBase || 0;
-  const newBase = roundToTwoDecimals(currentBase + investmentAmount);
-  const cap3x = roundToTwoDecimals(newBase * 3);
+  const ownInvestment = wallet.totalInvestmentAmount || 0;
+  const cap3x = roundToTwoDecimals(ownInvestment * 3);
   const newTotalAfterCredit = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
 
   let mainCredited = 0;
@@ -330,7 +328,6 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
 
   // Update tracking fields — full income counts toward 3X (main + pending)
   wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
-  wallet.eligibleInvestmentBase = newBase;
   await wallet.save({ session });
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };

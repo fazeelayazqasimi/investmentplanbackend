@@ -106,10 +106,8 @@ const getProgressData = asyncHandler(async (req, res) => {
   const remaining2x = Math.max(0, milestone2x - progress2x);
   const percentage2x = milestone2x > 0 ? Math.min(100, Math.round((progress2x / milestone2x) * 100)) : 0;
 
-  // 3X Milestone: Total earnings cap — use own investment OR eligible downline base
-  // When user has no own investment but earns from downline, use eligibleInvestmentBase
-  const capBase = Math.max(totalInvestment, eligibleInvestmentBase);
-  const milestone3x = capBase * 3;
+  // 3X Milestone: Total earnings cap — based on user's own investment only
+  const milestone3x = totalInvestment * 3;
   const progress3x = totalEligibleEarnings;
   const remaining3x = Math.max(0, milestone3x - progress3x);
   const percentage3x = milestone3x > 0 ? Math.min(100, Math.round((progress3x / milestone3x) * 100)) : 0;
