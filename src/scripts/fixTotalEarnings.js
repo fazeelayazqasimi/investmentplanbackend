@@ -15,7 +15,7 @@ mongoose.connect(process.env.MONGO_URI).then(async () => {
     const userId = wallet.user;
 
     // Find all credit transactions that should count towards totalEarnings
-    const creditTypes = ['ROI', 'COMMISSION', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS', 'PENDING_RELEASE'];
+    const creditTypes = ['ROI', 'COMMISSION', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS', 'PENDING_RELEASE', 'PENDING_NETWORK_COMMISSION'];
     const creditTxs = await transactionsCol
       .find({
         user: userId,

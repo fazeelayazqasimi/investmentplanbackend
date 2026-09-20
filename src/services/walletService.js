@@ -70,7 +70,7 @@ const adjustWalletBalance = async ({
     wallet[balanceField] = newBalance;
 
     // Track cumulative lifetime earnings for all credit types.
-    const creditTypes = ['ROI', 'COMMISSION', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS', 'PENDING_RELEASE'];
+    const creditTypes = ['ROI', 'COMMISSION', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS', 'PENDING_RELEASE', 'PENDING_NETWORK_COMMISSION'];
     if (creditTypes.includes(type) && roundedAmount > 0) {
       wallet.totalEarnings = roundToTwoDecimals(wallet.totalEarnings + roundedAmount);
     }

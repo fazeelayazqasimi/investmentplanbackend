@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Investment = require('../models/Investment');
 const Wallet = require('../models/Wallet');
+const Transaction = require('../models/Transaction');
 const ROIHistory = require('../models/ROIHistory');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
@@ -334,7 +335,38 @@ const processAllActiveInvestments = async (forDate = new Date()) => {
     }
   }
 
-  return { processed, skipped, errors };
+  // --- PENDING AUTO-RELEASE after daily ROI ---
+  // For all users with pending commissions, check if pending can fit under 3X cap
+  const wallets = await Wallet.find({ pendingCommissions: { $gt: 0 } });
+  let releasedCount = 0;
+
+  for (const wallet of wallets) {
+    const cap3x = roundToTwoDecimals((wallet.totalInvestmentAmount || 0) * 3);
+    const eligible = wallet.totalEligibleEarnings || 0;
+    const remaining = roundToTwoDecimals(Math.max(0, cap3x - eligible));
+    const pending = wallet.pendingCommissions || 0;
+
+    if (pending > 0 && remaining > 0) {
+      const releaseAmount = roundToTwoDecimals(Math.min(pending, remaining));
+      if (releaseAmount > 0) {
+        wallet.pendingCommissions = roundToTwoDecimals(pending - releaseAmount);
+        wallet.mainBalance = roundToTwoDecimals((wallet.mainBalance || 0) + releaseAmount);
+        await wallet.save();
+        await Transaction.create({
+          user: wallet.user,
+          type: 'PENDING_RELEASE',
+          amount: releaseAmount,
+          balanceBefore: roundToTwoDecimals(pending),
+          balanceAfter: roundToTwoDecimals(wallet.pendingCommissions),
+          description: `Auto-released pending to main - $${releaseAmount} (remaining cap: $${remaining})`,
+          status: 'COMPLETED',
+        });
+        releasedCount++;
+      }
+    }
+  }
+
+  return { processed, skipped, errors, released: releasedCount };
 };
 
 /**

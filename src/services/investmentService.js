@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Investment = require('../models/Investment');
 const Wallet = require('../models/Wallet');
+const Transaction = require('../models/Transaction');
 const User = require('../models/User');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
@@ -213,11 +214,35 @@ const createInvestment = async ({
 
       userWallet.totalInvestmentAmount = roundToTwoDecimals(totalActive);
       userWallet.totalMaxReturn = roundToTwoDecimals(totalActive * 2);
-      // Reset progress on reinvestment — fresh cycle starts
+      // Reset 2X progress on reinvestment — fresh cycle starts
       userWallet.totalRoiEarned = 0;
       userWallet.totalReturned = 0;
-      userWallet.totalEligibleEarnings = 0;
-      await userWallet.save({ session });
+      // totalEligibleEarnings — DO NOT reset, 3X tracking continues
+
+      // --- PENDING AUTO-RELEASE ---
+      // After reset, check if pending can now fit under new 3X cap
+      const pendingAmount = userWallet.pendingCommissions || 0;
+      const newCap3x = roundToTwoDecimals(totalActive * 3);
+      if (pendingAmount > 0 && newCap3x > 0) {
+        const releaseAmount = roundToTwoDecimals(Math.min(pendingAmount, newCap3x));
+        if (releaseAmount > 0) {
+          userWallet.pendingCommissions = roundToTwoDecimals(pendingAmount - releaseAmount);
+          userWallet.mainBalance = roundToTwoDecimals((userWallet.mainBalance || 0) + releaseAmount);
+          userWallet.totalEarnings = roundToTwoDecimals((userWallet.totalEarnings || 0) + releaseAmount);
+          await userWallet.save({ session });
+          await Transaction.create([{
+            user: targetUserId,
+            type: 'PENDING_RELEASE',
+            amount: releaseAmount,
+            balanceBefore: roundToTwoDecimals(pendingAmount),
+            balanceAfter: roundToTwoDecimals(userWallet.pendingCommissions),
+            description: `Pending commission released to main balance - $${releaseAmount} (new cap: $${newCap3x})`,
+            status: 'COMPLETED',
+          }], { session });
+        }
+      } else {
+        await userWallet.save({ session });
+      }
 
       // --- LEVEL INCOME (all configured levels) ---
       // Traverse upline chain for every configured level in settings.levels.
@@ -492,11 +517,34 @@ const createDownlineInvestmentWithEwallet = async ({
 
       receiverWallet.totalInvestmentAmount = roundToTwoDecimals(receiverTotalActive);
       receiverWallet.totalMaxReturn = roundToTwoDecimals(receiverTotalActive * 2);
-      // Reset progress on reinvestment — fresh cycle starts
+      // Reset 2X progress on reinvestment — fresh cycle starts
       receiverWallet.totalRoiEarned = 0;
       receiverWallet.totalReturned = 0;
-      receiverWallet.totalEligibleEarnings = 0;
-      await receiverWallet.save({ session });
+      // totalEligibleEarnings — DO NOT reset, 3X tracking continues
+
+      // --- PENDING AUTO-RELEASE ---
+      const receiverPending = receiverWallet.pendingCommissions || 0;
+      const receiverCap3x = roundToTwoDecimals(receiverTotalActive * 3);
+      if (receiverPending > 0 && receiverCap3x > 0) {
+        const releaseAmount = roundToTwoDecimals(Math.min(receiverPending, receiverCap3x));
+        if (releaseAmount > 0) {
+          receiverWallet.pendingCommissions = roundToTwoDecimals(receiverPending - releaseAmount);
+          receiverWallet.mainBalance = roundToTwoDecimals((receiverWallet.mainBalance || 0) + releaseAmount);
+          receiverWallet.totalEarnings = roundToTwoDecimals((receiverWallet.totalEarnings || 0) + releaseAmount);
+          await receiverWallet.save({ session });
+          await Transaction.create([{
+            user: receiverId,
+            type: 'PENDING_RELEASE',
+            amount: releaseAmount,
+            balanceBefore: roundToTwoDecimals(receiverPending),
+            balanceAfter: roundToTwoDecimals(receiverWallet.pendingCommissions),
+            description: `Pending commission released to main balance - $${releaseAmount} (new cap: $${receiverCap3x})`,
+            status: 'COMPLETED',
+          }], { session });
+        }
+      } else {
+        await receiverWallet.save({ session });
+      }
 
       // --- LEVEL INCOME (all configured levels) for receiver's uplines ---
       if (receiver.referredBy) {
