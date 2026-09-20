@@ -98,6 +98,7 @@ const getProgressData = asyncHandler(async (req, res) => {
   const totalRoiEarned = wallet ? (wallet.totalRoiEarned || 0) : 0;
   const totalEligibleEarnings = wallet ? (wallet.totalEligibleEarnings || 0) : 0;
   const cycle2xCompletions = wallet ? (wallet.cycle2xCompletions || 0) : 0;
+  const eligibleInvestmentBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
 
   // 2X Milestone: ROI cap (total investment * 2) — GLOBAL
   const milestone2x = totalInvestment * 2;
@@ -105,8 +106,10 @@ const getProgressData = asyncHandler(async (req, res) => {
   const remaining2x = Math.max(0, milestone2x - progress2x);
   const percentage2x = milestone2x > 0 ? Math.min(100, Math.round((progress2x / milestone2x) * 100)) : 0;
 
-  // 3X Milestone: Total earnings cap (total investment * 3) — GLOBAL
-  const milestone3x = totalInvestment * 3;
+  // 3X Milestone: Total earnings cap — use own investment OR eligible downline base
+  // When user has no own investment but earns from downline, use eligibleInvestmentBase
+  const capBase = Math.max(totalInvestment, eligibleInvestmentBase);
+  const milestone3x = capBase * 3;
   const progress3x = totalEligibleEarnings;
   const remaining3x = Math.max(0, milestone3x - progress3x);
   const percentage3x = milestone3x > 0 ? Math.min(100, Math.round((progress3x / milestone3x) * 100)) : 0;

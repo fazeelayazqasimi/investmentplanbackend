@@ -209,6 +209,7 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
 
   // Update tracking fields — full income counts toward 3X (main + pending)
   wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
+  wallet.eligibleInvestmentBase = roundToTwoDecimals((wallet.eligibleInvestmentBase || 0) + investmentAmount);
   await wallet.save({ session });
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
