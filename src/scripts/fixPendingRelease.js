@@ -53,7 +53,7 @@ mongoose.connect(process.env.MONGO_URI).then(async () => {
 
     // --- Step 2: Recalculate totalEligibleEarnings from transactions ---
     // Eligible types that count toward 3X cap
-    const eligibleTypes = ['ROI', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE', 'PENDING_RELEASE', 'SIGNUP_BONUS', 'UPLINE_SIGNUP_BONUS'];
+    const eligibleTypes = ['ROI', 'DIRECT_INCOME', 'LEVEL_INCOME', 'PROFIT_SHARE', 'PENDING_RELEASE'];
     const eligibleTxs = await transactionsCol
       .find({ user: userId, type: { $in: eligibleTypes }, status: 'COMPLETED' })
       .project({ amount: 1 })

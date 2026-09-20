@@ -58,11 +58,6 @@ const processRegistrationBonuses = async (userId, uplineId, session) => {
       session,
     });
     userBonus = result.transaction;
-    const userWallet = await Wallet.findOne({ user: userId }).session(session);
-    if (userWallet) {
-      userWallet.totalEligibleEarnings = roundToTwoDecimals((userWallet.totalEligibleEarnings || 0) + settings.signupBonusAmount);
-      await userWallet.save({ session });
-    }
   }
 
   // --- Upline bonus for referrer ---
@@ -86,11 +81,6 @@ const processRegistrationBonuses = async (userId, uplineId, session) => {
         session,
       });
       uplineBonus = result.transaction;
-      const uplineWallet = await Wallet.findOne({ user: uplineId }).session(session);
-      if (uplineWallet) {
-        uplineWallet.totalEligibleEarnings = roundToTwoDecimals((uplineWallet.totalEligibleEarnings || 0) + settings.uplineSignupBonusAmount);
-        await uplineWallet.save({ session });
-      }
     }
   }
 
@@ -207,8 +197,8 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
     }
   }
 
-  // Update tracking fields — full income counts toward 3X (main + pending)
-  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
+  // Update tracking — only count what actually went to main wallet
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
   await wallet.save({ session });
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
@@ -326,8 +316,8 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
     }
   }
 
-  // Update tracking fields — full income counts toward 3X (main + pending)
-  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
+  // Update tracking — only count what actually went to main wallet
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
   await wallet.save({ session });
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
@@ -441,8 +431,8 @@ const creditLevelIncomeForLevel = async (level, uplineId, investmentAmount, sess
     }
   }
 
-  // Update tracking fields — full income counts toward 3X (main + pending)
-  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
+  // Update tracking — only count what actually went to main wallet
+  wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
   await wallet.save({ session });
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };

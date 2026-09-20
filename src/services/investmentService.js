@@ -220,19 +220,16 @@ const createInvestment = async ({
       // totalEligibleEarnings — DO NOT reset, 3X tracking continues
 
       // --- PENDING AUTO-RELEASE ---
-      // Release pending commissions up to (newInvestment × pendingReleaseMultiplier) or remaining 3X cap
+      // Release pending commissions up to (newInvestment × pendingReleaseMultiplier)
       const pendingAmount = userWallet.pendingCommissions || 0;
-      const newCap3x = roundToTwoDecimals(totalActive * 3);
-      const eligible = userWallet.totalEligibleEarnings || 0;
-      const remaining = roundToTwoDecimals(Math.max(0, newCap3x - eligible));
       const pendingMultiplier = settings.pendingReleaseMultiplier || 3;
       const maxFromPending = roundToTwoDecimals(roundedAmount * pendingMultiplier);
-      if (pendingAmount > 0 && remaining > 0) {
-        const releaseAmount = roundToTwoDecimals(Math.min(pendingAmount, maxFromPending, remaining));
+      if (pendingAmount > 0) {
+        const releaseAmount = roundToTwoDecimals(Math.min(pendingAmount, maxFromPending));
         if (releaseAmount > 0) {
           userWallet.pendingCommissions = roundToTwoDecimals(pendingAmount - releaseAmount);
           userWallet.mainBalance = roundToTwoDecimals((userWallet.mainBalance || 0) + releaseAmount);
-          userWallet.totalEligibleEarnings = roundToTwoDecimals(eligible + releaseAmount);
+          userWallet.totalEligibleEarnings = roundToTwoDecimals((userWallet.totalEligibleEarnings || 0) + releaseAmount);
           await userWallet.save({ session });
           await Transaction.create([{
             user: targetUserId,
@@ -240,7 +237,7 @@ const createInvestment = async ({
             amount: releaseAmount,
             balanceBefore: roundToTwoDecimals(pendingAmount),
             balanceAfter: roundToTwoDecimals(userWallet.pendingCommissions),
-            description: `Pending released to main - $${releaseAmount} (${pendingMultiplier}× investment $${roundedAmount}, remaining cap: $${remaining})`,
+            description: `Pending released to main - $${releaseAmount} (${pendingMultiplier}× investment $${roundedAmount})`,
             status: 'COMPLETED',
           }], { session });
         }
@@ -527,19 +524,16 @@ const createDownlineInvestmentWithEwallet = async ({
       // totalEligibleEarnings — DO NOT reset, 3X tracking continues
 
       // --- PENDING AUTO-RELEASE ---
-      // Release pending commissions up to (newInvestment × pendingReleaseMultiplier) or remaining 3X cap
+      // Release pending commissions up to (newInvestment × pendingReleaseMultiplier)
       const receiverPending = receiverWallet.pendingCommissions || 0;
-      const receiverCap3x = roundToTwoDecimals(receiverTotalActive * 3);
-      const receiverEligible = receiverWallet.totalEligibleEarnings || 0;
-      const receiverRemaining = roundToTwoDecimals(Math.max(0, receiverCap3x - receiverEligible));
       const receiverPendingMultiplier = settings.pendingReleaseMultiplier || 3;
       const receiverMaxFromPending = roundToTwoDecimals(roundedAmount * receiverPendingMultiplier);
-      if (receiverPending > 0 && receiverRemaining > 0) {
-        const releaseAmount = roundToTwoDecimals(Math.min(receiverPending, receiverMaxFromPending, receiverRemaining));
+      if (receiverPending > 0) {
+        const releaseAmount = roundToTwoDecimals(Math.min(receiverPending, receiverMaxFromPending));
         if (releaseAmount > 0) {
           receiverWallet.pendingCommissions = roundToTwoDecimals(receiverPending - releaseAmount);
           receiverWallet.mainBalance = roundToTwoDecimals((receiverWallet.mainBalance || 0) + releaseAmount);
-          receiverWallet.totalEligibleEarnings = roundToTwoDecimals(receiverEligible + releaseAmount);
+          receiverWallet.totalEligibleEarnings = roundToTwoDecimals((receiverWallet.totalEligibleEarnings || 0) + releaseAmount);
           await receiverWallet.save({ session });
           await Transaction.create([{
             user: receiverId,
@@ -547,7 +541,7 @@ const createDownlineInvestmentWithEwallet = async ({
             amount: releaseAmount,
             balanceBefore: roundToTwoDecimals(receiverPending),
             balanceAfter: roundToTwoDecimals(receiverWallet.pendingCommissions),
-            description: `Pending released to main - $${releaseAmount} (${receiverPendingMultiplier}× investment $${roundedAmount}, remaining cap: $${receiverRemaining})`,
+            description: `Pending released to main - $${releaseAmount} (${receiverPendingMultiplier}× investment $${roundedAmount})`,
             status: 'COMPLETED',
           }], { session });
         }
