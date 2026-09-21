@@ -25,7 +25,8 @@ const {
   deleteUser,
   updateUserCredentials,
   adjustUserWallet,
-  requestWithdrawal,
+  approveWithdrawal,
+  rejectWithdrawal,
   listWithdrawals,
   triggerAutoRoi,
   getAutoRoiSettings,
@@ -57,13 +58,14 @@ router.patch('/users/:id/suspend', suspendUser);
 router.delete('/users/:id', deleteUser);
 router.patch('/users/:id/credentials', updateUserCredentials);
 router.post('/users/:id/wallet/adjust', adjustUserWallet);
-router.post('/users/:id/withdraw', requestWithdrawal);
 
 // Investments (platform-wide)
 router.get('/investments', listInvestments);
 
 // Withdrawals
 router.get('/withdrawals', listWithdrawals);
+router.post('/withdrawals/:id/approve', approveWithdrawal);
+router.post('/withdrawals/:id/reject', rejectWithdrawal);
 
 // Transactions (platform-wide)
 router.get('/transactions', listTransactions);

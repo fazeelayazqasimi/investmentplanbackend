@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
+const SystemSettings = require('../models/SystemSettings');
 
 /**
  * Rounds a number to 2 decimal places safely for currency values.
@@ -808,6 +809,170 @@ const depositForDownline = async (senderId, receiverId, amount) => {
   }
 };
 
+// ==========================================
+// WITHDRAWAL REQUEST (pending admin approval)
+// ==========================================
+const requestWithdrawal = async (userId, { amount, balanceField, payoutMethod, payoutDetails, notes = '' }) => {
+  const roundedAmount = roundToTwoDecimals(amount);
+
+  if (roundedAmount <= 0) {
+    const error = new Error('Withdrawal amount must be greater than zero');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const validFields = ['mainBalance'];
+  if (!validFields.includes(balanceField)) {
+    const error = new Error('Withdrawal is only allowed from Main Wallet');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const validMethods = ['BANK', 'BEP20'];
+  if (!validMethods.includes(payoutMethod)) {
+    const error = new Error('Invalid payout method. Must be BANK or BEP20');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const wallet = await Wallet.findOne({ user: userId });
+  if (!wallet) {
+    const error = new Error('Wallet not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const currentBalance = wallet[balanceField] || 0;
+  if (currentBalance < roundedAmount) {
+    const error = new Error(`Insufficient balance. Available: $${currentBalance}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Check withdrawal max amount limit
+  const settings = await SystemSettings.getSettings();
+  if (settings.withdrawalMaxAmount > 0 && roundedAmount > settings.withdrawalMaxAmount) {
+    const error = new Error(`Maximum withdrawal amount is $${settings.withdrawalMaxAmount}. You entered: $${roundedAmount}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const metadata = {
+    payoutMethod,
+    payoutDetails,
+    notes,
+    balanceField,
+  };
+
+  const transaction = await Transaction.create({
+    user: userId,
+    amount: roundedAmount,
+    type: 'WITHDRAWAL',
+    status: 'PENDING',
+    description: `Withdrawal request: $${roundedAmount} from ${balanceField} via ${payoutMethod}`,
+    createdBy: userId,
+    metadata,
+  });
+
+  return transaction;
+};
+
+// ==========================================
+// APPROVE WITHDRAWAL (admin approves → debit wallet)
+// ==========================================
+const approveWithdrawal = async (transactionId, adminId) => {
+  const session = await mongoose.startSession();
+
+  try {
+    let result;
+
+    await session.withTransaction(async () => {
+      const tx = await Transaction.findById(transactionId).session(session);
+
+      if (!tx) {
+        const error = new Error('Withdrawal request not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (tx.type !== 'WITHDRAWAL') {
+        const error = new Error('Transaction is not a withdrawal request');
+        error.statusCode = 400;
+        throw error;
+      }
+      if (tx.status !== 'PENDING') {
+        const error = new Error(`Withdrawal already ${tx.status.toLowerCase()}`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const balanceField = tx.metadata?.balanceField || 'mainBalance';
+
+      let wallet = await Wallet.findOne({ user: tx.user }).session(session);
+      if (!wallet) {
+        const error = new Error('User wallet not found');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      const currentBalance = wallet[balanceField] || 0;
+      if (currentBalance < tx.amount) {
+        const error = new Error(`Insufficient balance. Available: $${currentBalance}`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      wallet[balanceField] = roundToTwoDecimals(currentBalance - tx.amount);
+      await wallet.save({ session });
+
+      tx.status = 'COMPLETED';
+      tx.createdBy = adminId;
+      tx.description = tx.description ? `${tx.description} (approved)` : 'Withdrawal approved';
+      await tx.save({ session });
+
+      result = tx;
+    });
+
+    return result;
+  } finally {
+    session.endSession();
+  }
+};
+
+// ==========================================
+// REJECT WITHDRAWAL (admin rejects → no balance change)
+// ==========================================
+const rejectWithdrawal = async (transactionId, adminId, reason = '') => {
+  const tx = await Transaction.findById(transactionId);
+
+  if (!tx) {
+    const error = new Error('Withdrawal request not found');
+    error.statusCode = 404;
+    throw error;
+  }
+  if (tx.type !== 'WITHDRAWAL') {
+    const error = new Error('Transaction is not a withdrawal request');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (tx.status !== 'PENDING') {
+    const error = new Error(`Withdrawal already ${tx.status.toLowerCase()}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  tx.status = 'REJECTED';
+  tx.createdBy = adminId;
+  tx.description = reason ? `Withdrawal rejected: ${reason}` : 'Withdrawal rejected';
+  if (tx.metadata) {
+    tx.metadata.rejectionReason = reason;
+  } else {
+    tx.metadata = { rejectionReason: reason };
+  }
+  await tx.save();
+
+  return tx;
+};
+
 module.exports = {
   adjustWalletBalance,
   getWallet,
@@ -815,6 +980,9 @@ module.exports = {
   requestDeposit,
   approveDeposit,
   rejectDeposit,
+  requestWithdrawal,
+  approveWithdrawal,
+  rejectWithdrawal,
   roundToTwoDecimals,
   transferRoiToMain,
   transferMainToFund,

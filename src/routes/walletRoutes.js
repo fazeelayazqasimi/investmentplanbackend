@@ -14,6 +14,7 @@ const {
   transferFund,
   getTransferSettings,
   requestWithdrawal,
+  getMyWithdrawals,
   getPendingCommissionDetails,
 } = require('../controllers/walletController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
@@ -52,6 +53,9 @@ router.post('/transfer/fund', authenticate, transferFund);
 
 // @route   POST /api/wallet/withdraw
 router.post('/withdraw', authenticate, requestWithdrawal);
+
+// @route   GET /api/wallet/withdrawals
+router.get('/withdrawals', authenticate, getMyWithdrawals);
 
 // ==========================================
 // ADMIN ROUTES (deposit approval workflow)

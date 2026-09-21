@@ -557,6 +557,8 @@ const updateSettings = asyncHandler(async (req, res) => {
     'roiDays',
     // Pending Release
     'pendingReleaseMultiplier',
+    // Withdrawal
+    'withdrawalMaxAmount',
   ];
   allowedScalars.forEach((key) => {
     if (body[key] !== undefined) settings[key] = body[key];
@@ -1439,34 +1441,30 @@ const adjustUserWallet = asyncHandler(async (req, res) => {
 });
 
 // ==========================================
-// @desc    Admin request withdrawal for user
-// @route   POST /api/admin/users/:id/withdraw
+// @desc    Admin approves a pending withdrawal (debits user wallet)
+// @route   POST /api/admin/withdrawals/:id/approve
 // @access  Private (Admin)
 // ==========================================
-const requestWithdrawal = asyncHandler(async (req, res) => {
+const approveWithdrawal = asyncHandler(async (req, res) => {
   const { id } = req.params;
-  const { amount, balanceField = 'mainBalance' } = req.body;
 
-  if (!amount || amount <= 0) return res.status(400).json({ success: false, message: 'Invalid amount' });
+  const transaction = await walletService.approveWithdrawal(id, req.user.id);
 
-  const wallet = await Wallet.findOne({ user: id });
-  if (!wallet) return res.status(404).json({ success: false, message: 'Wallet not found' });
+  res.status(200).json({ success: true, message: 'Withdrawal approved and wallet debited', data: { transaction } });
+});
 
-  const currentBalance = wallet[balanceField] || 0;
-  if (currentBalance < amount) {
-    return res.status(400).json({ success: false, message: `Insufficient balance. Available: $${currentBalance}` });
-  }
+// ==========================================
+// @desc    Admin rejects a pending withdrawal
+// @route   POST /api/admin/withdrawals/:id/reject
+// @access  Private (Admin)
+// ==========================================
+const rejectWithdrawal = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { reason } = req.body;
 
-  const result = await walletService.adjustWalletBalance({
-    userId: id,
-    balanceField,
-    amount: -Math.abs(amount),
-    type: 'WITHDRAWAL',
-    description: `Withdrawal request: $${amount}`,
-    createdBy: req.user.id,
-  });
+  const transaction = await walletService.rejectWithdrawal(id, req.user.id, reason || '');
 
-  res.status(200).json({ success: true, message: 'Withdrawal request submitted', data: result });
+  res.status(200).json({ success: true, message: 'Withdrawal rejected', data: { transaction } });
 });
 
 // ==========================================
@@ -1591,7 +1589,8 @@ module.exports = {
   deleteUser,
   updateUserCredentials,
   adjustUserWallet,
-  requestWithdrawal,
+  approveWithdrawal,
+  rejectWithdrawal,
   listWithdrawals,
   triggerAutoRoi,
   getAutoRoiSettings,

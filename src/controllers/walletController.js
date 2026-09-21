@@ -224,48 +224,71 @@ const getTransferSettings = asyncHandler(async (req, res) => {
       ewalletDownlineActivationEnabled: settings.ewalletDownlineActivationEnabled,
       ewalletDownlineDepositEnabled: settings.ewalletDownlineDepositEnabled,
       selfInvestmentEwalletMaxPercentage: settings.selfInvestmentEwalletMaxPercentage,
+      withdrawalMaxAmount: settings.withdrawalMaxAmount || 0,
     },
   });
 });
 
 // ==========================================
-// @desc    User requests a withdrawal
+// @desc    User requests a withdrawal (pending admin approval)
 // @route   POST /api/wallet/withdraw
 // @access  Private (User)
 // ==========================================
 const requestWithdrawal = asyncHandler(async (req, res) => {
-  const { amount, balanceField = 'mainBalance' } = req.body;
+  const { amount, balanceField = 'mainBalance', payoutMethod, payoutDetails, notes } = req.body;
 
   if (!amount || amount <= 0) {
     return res.status(400).json({ success: false, message: 'Invalid amount' });
   }
 
-  const validFields = ['mainBalance', 'roiBalance', 'commissionBalance', 'ewalletBalance', 'profitShareBalance', 'fundBalance'];
-  if (!validFields.includes(balanceField)) {
-    return res.status(400).json({ success: false, message: 'Invalid wallet field' });
+  if (!payoutMethod) {
+    return res.status(400).json({ success: false, message: 'Payout method is required (BANK or BEP20)' });
   }
 
-  const wallet = await Wallet.findOne({ user: req.user.id });
-  if (!wallet) return res.status(404).json({ success: false, message: 'Wallet not found' });
-
-  const currentBalance = wallet[balanceField] || 0;
-  if (currentBalance < amount) {
-    return res.status(400).json({ success: false, message: `Insufficient balance. Available: $${currentBalance}` });
+  if (!payoutDetails) {
+    return res.status(400).json({ success: false, message: 'Payout details are required' });
   }
 
-  const result = await walletService.adjustWalletBalance({
-    userId: req.user.id,
+  const transaction = await walletService.requestWithdrawal(req.user.id, {
+    amount: Number(amount),
     balanceField,
-    amount: -Math.abs(amount),
-    type: 'WITHDRAWAL',
-    description: `Withdrawal request: $${amount} from ${balanceField}`,
-    createdBy: req.user.id,
+    payoutMethod,
+    payoutDetails,
+    notes: notes || '',
   });
+
+  res.status(201).json({
+    success: true,
+    message: 'Your withdrawal request has been submitted. Admin will review and approve within 72 hours.',
+    data: { transaction },
+  });
+});
+
+// ==========================================
+// @desc    Get logged-in user's withdrawal requests
+// @route   GET /api/wallet/withdrawals
+// @access  Private (User)
+// ==========================================
+const getMyWithdrawals = asyncHandler(async (req, res) => {
+  const { page = 1, limit = 20, status } = req.query;
+  const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
+
+  const match = { user: req.user.id, type: 'WITHDRAWAL' };
+  if (status) match.status = status;
+
+  const [transactions, total] = await Promise.all([
+    Transaction.find(match)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Math.min(50, Number(limit)))
+      .lean(),
+    Transaction.countDocuments(match),
+  ]);
 
   res.status(200).json({
     success: true,
-    message: 'Your withdrawal request has been submitted. It will be processed within 72 hours.',
-    data: result,
+    data: { transactions },
+    pagination: { page: Number(page), limit: Number(limit), total, totalPages: Math.ceil(total / Number(limit)) },
   });
 });
 
@@ -348,5 +371,6 @@ module.exports = {
   transferFund,
   getTransferSettings,
   requestWithdrawal,
+  getMyWithdrawals,
   getPendingCommissionDetails,
 };

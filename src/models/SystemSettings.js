@@ -259,6 +259,15 @@ const systemSettingsSchema = new mongoose.Schema(
       default: 'AUTO',
     },
 
+    // ==========================================
+    // WITHDRAWAL SETTINGS
+    // ==========================================
+    withdrawalMaxAmount: {
+      type: Number,
+      default: 0, // 0 = no limit
+      min: [0, 'Withdrawal max amount cannot be negative'],
+    },
+
   },
   {
     timestamps: true,
