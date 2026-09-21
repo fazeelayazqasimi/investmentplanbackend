@@ -203,7 +203,7 @@ const activateDownlineAccount = async (senderId, receiverId) => {
  * @returns {Promise<Object>} updated safe user object
  */
 const updateUserProfile = async (userId, updates) => {
-  const allowedFields = ['name', 'phone'];
+  const allowedFields = ['name', 'phone', 'additionalEmails'];
 
   const sanitizedUpdates = {};
   for (const field of allowedFields) {

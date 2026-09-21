@@ -10,13 +10,42 @@ const bonusService = require('../services/bonusService');
 // @access  Public
 // ==========================================
 const register = asyncHandler(async (req, res) => {
-  const { name, email, phone, password, referralCode } = req.body;
+  const { name, email, phone, password, referralCode, additionalEmails } = req.body;
 
-  // Check for duplicate email
+  // Check for duplicate primary email
   const existingUser = await User.findOne({ email: email.toLowerCase() });
   if (existingUser) {
     res.status(409);
     throw new Error('An account with this email already exists');
+  }
+
+  // Process additional emails: unique, valid, not duplicate of primary or each other
+  const extraEmails = [];
+  if (Array.isArray(additionalEmails)) {
+    const emailSet = new Set([email.toLowerCase()]);
+    for (const e of additionalEmails) {
+      const normalized = e.toLowerCase().trim();
+      if (!normalized) continue;
+      if (emailSet.has(normalized)) {
+        res.status(400);
+        throw new Error(`Duplicate email: ${normalized}`);
+      }
+      emailSet.add(normalized);
+      extraEmails.push(normalized);
+    }
+    // Check if any additional email already exists in DB
+    if (extraEmails.length > 0) {
+      const existingEmail = await User.findOne({
+        $or: [
+          { email: { $in: extraEmails } },
+          { additionalEmails: { $in: extraEmails } },
+        ],
+      });
+      if (existingEmail) {
+        res.status(409);
+        throw new Error('One of the additional emails is already registered');
+      }
+    }
   }
 
   // Resolve referral code to an upline user, if provided
@@ -38,7 +67,7 @@ const register = asyncHandler(async (req, res) => {
     let newUser;
     await session.withTransaction(async () => {
       newUser = await User.create(
-        [{ name, email, phone, password, referredBy }],
+        [{ name, email, phone, password, referredBy, additionalEmails: extraEmails }],
         { session }
       );
 
@@ -74,8 +103,13 @@ const register = asyncHandler(async (req, res) => {
 const login = asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
-  // Explicitly select password since schema excludes it by default
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+  // Search by primary email OR any additional email
+  const user = await User.findOne({
+    $or: [
+      { email: email.toLowerCase() },
+      { additionalEmails: email.toLowerCase() },
+    ],
+  }).select('+password');
 
   if (!user) {
     res.status(401);

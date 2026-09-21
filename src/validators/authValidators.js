@@ -49,6 +49,16 @@ const registerValidationRules = [
     .withMessage('Invalid referral code format')
     .isAlphanumeric()
     .withMessage('Referral code must be alphanumeric'),
+
+  body('additionalEmails')
+    .optional()
+    .isArray({ max: 4 })
+    .withMessage('Maximum 4 additional emails allowed'),
+  body('additionalEmails.*')
+    .optional()
+    .isEmail()
+    .withMessage('Each additional email must be valid')
+    .normalizeEmail(),
 ];
 
 // ==========================================

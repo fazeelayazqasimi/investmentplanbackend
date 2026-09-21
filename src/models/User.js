@@ -22,6 +22,15 @@ const userSchema = new mongoose.Schema(
         'Please provide a valid email address',
       ],
     },
+    additionalEmails: [{
+      type: String,
+      lowercase: true,
+      trim: true,
+      match: [
+        /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+        'Please provide a valid email address',
+      ],
+    }],
     phone: {
       type: String,
       required: [true, 'Phone number is required'],
