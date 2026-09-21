@@ -54,10 +54,17 @@ const getMyTransactions = asyncHandler(async (req, res) => {
 const requestDeposit = asyncHandler(async (req, res) => {
   const { amount, description } = req.body;
 
+  const metadata = {};
+  if (req.file) {
+    metadata.proofImage = req.file.path;
+    metadata.proofPublicId = req.file.filename;
+  }
+
   const transaction = await walletService.requestDeposit(
     req.user.id,
     Number(amount),
-    description
+    description,
+    metadata
   );
 
   res.status(201).json({
@@ -212,6 +219,11 @@ const getTransferSettings = asyncHandler(async (req, res) => {
       roiTransferEnabled: settings.roiTransferEnabled,
       profitShareTransferEnabled: settings.profitShareTransferEnabled,
       fundTransferEnabled: settings.fundTransferEnabled,
+      ewalletDownlineOfferEnabled: settings.ewalletDownlineOfferEnabled,
+      ewalletMaxPercentage: settings.ewalletMaxPercentage,
+      ewalletDownlineActivationEnabled: settings.ewalletDownlineActivationEnabled,
+      ewalletDownlineDepositEnabled: settings.ewalletDownlineDepositEnabled,
+      selfInvestmentEwalletMaxPercentage: settings.selfInvestmentEwalletMaxPercentage,
     },
   });
 });

@@ -1,6 +1,8 @@
 const User = require('../models/User');
 const SystemSettings = require('../models/SystemSettings');
+const Wallet = require('../models/Wallet');
 const walletService = require('./walletService');
+const referralService = require('./referralService');
 
 /**
  * Rounds a number to 2 decimal places safely for currency values.
@@ -96,6 +98,102 @@ const activateAccount = async (userId, walletSource = 'mainBalance') => {
 };
 
 /**
+ * Activates a downline user's account using the sender's E-Wallet balance.
+ * The activation fee is deducted from the sender, not the receiver.
+ *
+ * @param {string} senderId - the user paying for activation
+ * @param {string} receiverId - the downline user being activated
+ * @returns {Promise<Object>}
+ */
+const activateDownlineAccount = async (senderId, receiverId) => {
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.ewalletDownlineActivationEnabled) {
+    const error = new Error('Downline activation via E-Wallet is currently disabled by admin');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const fee = roundToTwoDecimals(settings.activationFee || 0);
+  if (fee <= 0) {
+    const error = new Error('Account activation is not required (fee is $0)');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!receiverId) {
+    const error = new Error('Receiver ID is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (senderId === receiverId) {
+    const error = new Error('You cannot activate your own account through downline activation');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const sender = await User.findById(senderId);
+  if (!sender) {
+    const error = new Error('Sender not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const receiver = await User.findById(receiverId);
+  if (!receiver) {
+    const error = new Error('Receiver not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (receiver.isActivated) {
+    return { alreadyActivated: true, message: 'This downline account is already activated' };
+  }
+
+  // Verify receiver is in sender's downline tree
+  const allDownlines = await referralService.getAllDownlines(senderId);
+  const receiverIdStr = receiverId.toString();
+  const isDownline = allDownlines.some(
+    (d) => (d.user?._id || d._id)?.toString() === receiverIdStr
+  );
+  if (!isDownline) {
+    const error = new Error('You can only activate accounts of users in your downline');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Check sender's E-Wallet balance
+  const senderWallet = await Wallet.findOne({ user: senderId });
+  const availableBalance = senderWallet ? senderWallet.ewalletBalance : 0;
+  if (availableBalance < fee) {
+    const error = new Error(`Insufficient E-Wallet balance for activation fee ($${fee}). Available: $${availableBalance}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Deduct fee from sender's E-Wallet
+  const result = await walletService.adjustWalletBalance({
+    userId: senderId,
+    balanceField: 'ewalletBalance',
+    amount: -fee,
+    type: 'E_WALLET_DOWNLINE_ACTIVATION',
+    description: `Activated downline account (${receiver.name || receiver.email}) - $${fee} from E-Wallet`,
+    createdBy: senderId,
+  });
+
+  // Activate the receiver
+  receiver.isActivated = true;
+  await receiver.save();
+
+  return {
+    transaction: result.transaction,
+    fee,
+    receiver: { id: receiver._id, name: receiver.name, email: receiver.email },
+  };
+};
+
+/**
  * Updates allowed profile fields for a user.
  * Restricts updates to a safe whitelist — role, referralCode,
  * accountStatus, password, etc. can NEVER be changed through this path.
@@ -154,5 +252,6 @@ module.exports = {
   updateUserProfile,
   buildReferralLink,
   activateAccount,
+  activateDownlineAccount,
 };
 

@@ -46,6 +46,7 @@ const getMyInvestments = asyncHandler(async (req, res) => {
     message: 'Investments fetched successfully',
     data: {
       investments: result.investments,
+      stats: result.stats,
     },
     pagination: result.pagination,
   });

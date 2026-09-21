@@ -47,4 +47,36 @@ const uploadChatImages = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 }).array('images', 5);
 
-module.exports = { cloudinary, uploadAnnouncementImages, uploadChatImages };
+// Bank account QR code upload
+const bankQrStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'finrise/bank-qr',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+    transformation: [{ width: 600, height: 600, crop: 'limit', quality: 'auto' }],
+  },
+});
+
+const uploadBankQr = multer({
+  storage: bankQrStorage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+}).single('qrCode');
+
+// Deposit proof image upload
+const depositProofStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'finrise/deposit-proofs',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+    transformation: [{ width: 1200, height: 1200, crop: 'limit', quality: 'auto' }],
+  },
+});
+
+const uploadDepositProof = multer({
+  storage: depositProofStorage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+}).single('proofImage');
+
+module.exports = { cloudinary, uploadAnnouncementImages, uploadChatImages, uploadBankQr, uploadDepositProof };

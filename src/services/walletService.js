@@ -176,7 +176,7 @@ const getUserTransactions = async (userId, { page = 1, limit = 20, type } = {}) 
  * @param {string} [description]
  * @returns {Promise<Object>} the pending transaction
  */
-const requestDeposit = async (userId, amount, description = '') => {
+const requestDeposit = async (userId, amount, description = '', metadata = {}) => {
   const roundedAmount = roundToTwoDecimals(amount);
 
   if (roundedAmount <= 0) {
@@ -185,14 +185,21 @@ const requestDeposit = async (userId, amount, description = '') => {
     throw error;
   }
 
-  const transaction = await Transaction.create({
+  const txData = {
     user: userId,
     amount: roundedAmount,
     type: 'DEPOSIT',
     status: 'PENDING',
     description: description || 'Deposit request',
     createdBy: userId,
-  });
+  };
+
+  if (metadata.proofImage) {
+    txData.proofImage = metadata.proofImage;
+    txData.proofPublicId = metadata.proofPublicId;
+  }
+
+  const transaction = await Transaction.create(txData);
 
   return transaction;
 };
@@ -662,6 +669,145 @@ const transferFundToUser = async (senderId, receiverId, amount) => {
   }
 };
 
+/**
+ * Deposits funds from sender's E-Wallet to a downline user's mainBalance.
+ * Direct credit — no admin approval needed.
+ *
+ * @param {string} senderId - the user paying
+ * @param {string} receiverId - the downline user receiving the deposit
+ * @param {number} amount - deposit amount
+ * @returns {Promise<Object>}
+ */
+const depositForDownline = async (senderId, receiverId, amount) => {
+  const SystemSettings = require('../models/SystemSettings');
+  const User = require('../models/User');
+  const referralService = require('./referralService');
+
+  const settings = await SystemSettings.getSettings();
+
+  if (!settings.ewalletDownlineDepositEnabled) {
+    const error = new Error('Downline deposit via E-Wallet is currently disabled by admin');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const roundedAmount = roundToTwoDecimals(amount);
+  if (roundedAmount <= 0) {
+    const error = new Error('Deposit amount must be greater than zero');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!receiverId) {
+    const error = new Error('Receiver ID is required');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (senderId === receiverId) {
+    const error = new Error('You cannot deposit to your own account');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const sender = await User.findById(senderId);
+  if (!sender) {
+    const error = new Error('Sender not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const receiver = await User.findById(receiverId);
+  if (!receiver) {
+    const error = new Error('Receiver not found');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // Verify receiver is in sender's downline tree
+  const allDownlines = await referralService.getAllDownlines(senderId);
+  const receiverIdStr = receiverId.toString();
+  const isDownline = allDownlines.some(
+    (d) => (d.user?._id || d._id)?.toString() === receiverIdStr
+  );
+  if (!isDownline) {
+    const error = new Error('You can only deposit for users in your downline');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      const senderWallet = await Wallet.findOne({ user: senderId }).session(session);
+      if (!senderWallet) {
+        const error = new Error('Sender wallet not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (senderWallet.ewalletBalance < roundedAmount) {
+        const error = new Error(`Insufficient E-Wallet balance. Available: $${senderWallet.ewalletBalance}`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      // Debit sender's E-Wallet
+      senderWallet.ewalletBalance = roundToTwoDecimals(senderWallet.ewalletBalance - roundedAmount);
+      await senderWallet.save({ session });
+
+      // Credit receiver's mainBalance
+      let receiverWallet = await Wallet.findOne({ user: receiverId }).session(session);
+      if (!receiverWallet) {
+        const created = await Wallet.create([{ user: receiverId }], { session });
+        receiverWallet = created[0];
+      }
+      receiverWallet.mainBalance = roundToTwoDecimals(receiverWallet.mainBalance + roundedAmount);
+      await receiverWallet.save({ session });
+
+      // Sender transaction
+      const senderTx = await Transaction.create(
+        [{
+          user: senderId,
+          amount: -roundedAmount,
+          type: 'E_WALLET_DOWNLINE_DEPOSIT_SENT',
+          status: 'COMPLETED',
+          description: `Deposit sent to ${receiver.name || receiver.email} - $${roundedAmount} from E-Wallet`,
+          reference: receiverId.toString(),
+          createdBy: senderId,
+        }],
+        { session }
+      );
+
+      // Receiver transaction
+      const receiverTx = await Transaction.create(
+        [{
+          user: receiverId,
+          amount: roundedAmount,
+          type: 'E_WALLET_DOWNLINE_DEPOSIT_RECEIVED',
+          status: 'COMPLETED',
+          description: `Deposit received from ${sender.name || sender.email} - $${roundedAmount}`,
+          reference: senderId.toString(),
+          createdBy: senderId,
+        }],
+        { session }
+      );
+
+      result = {
+        amount: roundedAmount,
+        senderTransaction: senderTx[0],
+        receiverTransaction: receiverTx[0],
+        senderBalance: senderWallet.ewalletBalance,
+        receiverBalance: receiverWallet.mainBalance,
+        receiver: { id: receiver._id, name: receiver.name, email: receiver.email },
+      };
+    });
+    return result;
+  } finally {
+    session.endSession();
+  }
+};
+
 module.exports = {
   adjustWalletBalance,
   getWallet,
@@ -676,4 +822,5 @@ module.exports = {
   adminTriggerRoiTransfer,
   adminTriggerProfitShareTransfer,
   transferFundToUser,
+  depositForDownline,
 };

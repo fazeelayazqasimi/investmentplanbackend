@@ -534,8 +534,13 @@ const updateSettings = asyncHandler(async (req, res) => {
     // E-Wallet Downline Investment Offer
     'ewalletDownlineOfferEnabled',
     'ewalletMaxPercentage',
+    // E-Wallet Downline Activation & Deposit
+    'ewalletDownlineActivationEnabled',
+    'ewalletDownlineDepositEnabled',
     // Activation
     'activationFee',
+    // Self-Investment E-Wallet Max Percentage
+    'selfInvestmentEwalletMaxPercentage',
     // Income
     'directIncomePercentage',
     'levelIncomePercentage',

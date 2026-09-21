@@ -36,6 +36,7 @@ const transactionSchema = new mongoose.Schema(
         'MAIN_TO_FUND_TRANSFER', 'FUND_ACTIVATION',
         'E_WALLET_DOWNLINE_INVESTMENT', 'PENDING_PROFIT_SHARE',
         'PENDING_RELEASE',
+        'E_WALLET_DOWNLINE_ACTIVATION', 'E_WALLET_DOWNLINE_DEPOSIT_SENT', 'E_WALLET_DOWNLINE_DEPOSIT_RECEIVED',
       ],
       required: [true, 'Transaction type is required'],
       index: true,
@@ -50,6 +51,15 @@ const transactionSchema = new mongoose.Schema(
     description: {
       type: String,
       trim: true,
+      default: '',
+    },
+
+    proofImage: {
+      type: String,
+      default: '',
+    },
+    proofPublicId: {
+      type: String,
       default: '',
     },
 

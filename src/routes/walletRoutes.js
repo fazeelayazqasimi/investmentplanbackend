@@ -17,6 +17,7 @@ const {
   getPendingCommissionDetails,
 } = require('../controllers/walletController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
+const { uploadDepositProof } = require('../middleware/uploadMiddleware');
 
 // ==========================================
 // PRIVATE ROUTES (all require authentication)
@@ -35,7 +36,7 @@ router.get('/transactions', authenticate, getMyTransactions);
 router.get('/pending-commissions', authenticate, getPendingCommissionDetails);
 
 // @route   POST /api/wallet/deposit  (user submits a deposit request)
-router.post('/deposit', authenticate, requestDeposit);
+router.post('/deposit', authenticate, uploadDepositProof, requestDeposit);
 
 // @route   POST /api/wallet/transfer/roi
 router.post('/transfer/roi', authenticate, transferRoi);

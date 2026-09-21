@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const userService = require('../services/userService');
+const walletService = require('../services/walletService');
 const referralService = require('../services/referralService');
 const SystemSettings = require('../models/SystemSettings');
 const Wallet = require('../models/Wallet');
@@ -193,10 +194,68 @@ const searchMyDownlines = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Activate a downline account using sender's E-Wallet
+// @route   POST /api/users/activate-downline
+// @access  Private (User)
+// ==========================================
+const activateDownline = asyncHandler(async (req, res) => {
+  const { receiverId } = req.body;
+
+  if (!receiverId) {
+    res.status(400);
+    throw new Error('Receiver ID is required');
+  }
+
+  const result = await userService.activateDownlineAccount(req.user.id, receiverId);
+
+  if (result.alreadyActivated) {
+    return res.status(200).json({
+      success: true,
+      message: result.message,
+      data: result,
+    });
+  }
+
+  res.status(200).json({
+    success: true,
+    message: `Downline account activated successfully. $${result.fee} deducted from your E-Wallet.`,
+    data: result,
+  });
+});
+
+// ==========================================
+// @desc    Deposit to a downline account using sender's E-Wallet
+// @route   POST /api/users/deposit-downline
+// @access  Private (User)
+// ==========================================
+const depositDownline = asyncHandler(async (req, res) => {
+  const { receiverId, amount } = req.body;
+
+  if (!receiverId) {
+    res.status(400);
+    throw new Error('Receiver ID is required');
+  }
+  if (!amount || Number(amount) <= 0) {
+    res.status(400);
+    throw new Error('Deposit amount must be greater than zero');
+  }
+
+  const result = await walletService.depositForDownline(req.user.id, receiverId, Number(amount));
+
+  res.status(200).json({
+    success: true,
+    message: `$${result.amount} deposited to ${result.receiver.name || result.receiver.email} successfully.`,
+    data: result,
+  });
+});
+
 module.exports = {
   getProfile,
   updateProfile,
   activateAccount,
+  activateDownline,
+  depositDownline,
   getPublicConfig,
   getProgressData,
   searchMyDownlines,

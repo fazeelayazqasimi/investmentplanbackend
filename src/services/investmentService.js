@@ -66,6 +66,16 @@ const createInvestment = async ({
       error.statusCode = 400;
       throw error;
     }
+
+    // Self-investment E-Wallet max percentage enforcement
+    if (createdByRole === 'USER' && settings.selfInvestmentEwalletMaxPercentage > 0) {
+      const maxEwallet = roundToTwoDecimals(roundedAmount * settings.selfInvestmentEwalletMaxPercentage / 100);
+      if (ewalletAmt > maxEwallet) {
+        const error = new Error(`E-Wallet cannot exceed ${settings.selfInvestmentEwalletMaxPercentage}% of investment amount (max $${maxEwallet})`);
+        error.statusCode = 400;
+        throw error;
+      }
+    }
   }
 
   // Use ROI settings based on mode
@@ -293,7 +303,7 @@ const createInvestment = async ({
  * @param {number} [options.page=1]
  * @param {number} [options.limit=20]
  * @param {string} [options.status] - optional status filter
- * @returns {Promise<{investments: Array, pagination: Object}>}
+ * @returns {Promise<{investments: Array, stats: Object, pagination: Object}>}
  */
 const getUserInvestments = async (userId, { page = 1, limit = 20, status } = {}) => {
   const query = { user: userId };
@@ -303,13 +313,27 @@ const getUserInvestments = async (userId, { page = 1, limit = 20, status } = {})
 
   const skip = (page - 1) * limit;
 
-  const [investments, total] = await Promise.all([
+  const [investments, total, allStats, activeStats] = await Promise.all([
     Investment.find(query).sort({ createdAt: -1 }).skip(skip).limit(limit).lean({ virtuals: true }),
     Investment.countDocuments(query),
+    Investment.aggregate([
+      { $match: { user: new mongoose.Types.ObjectId(userId) } },
+      { $group: { _id: null, total: { $sum: '$originalAmount' }, count: { $sum: 1 } } },
+    ]),
+    Investment.aggregate([
+      { $match: { user: new mongoose.Types.ObjectId(userId), status: 'ACTIVE' } },
+      { $group: { _id: null, total: { $sum: '$originalAmount' }, count: { $sum: 1 } } },
+    ]),
   ]);
 
   return {
     investments,
+    stats: {
+      totalInvestment: allStats[0]?.total || 0,
+      totalInvestmentCount: allStats[0]?.count || 0,
+      activeInvestment: activeStats[0]?.total || 0,
+      activeInvestmentCount: activeStats[0]?.count || 0,
+    },
     pagination: {
       page: Number(page),
       limit: Number(limit),

@@ -9,6 +9,7 @@ const {
   deleteAccount,
 } = require('../controllers/bankAccountController');
 const { authenticate, authorizeAdmin } = require('../middleware/authMiddleware');
+const { uploadBankQr } = require('../middleware/uploadMiddleware');
 
 // @route   GET /api/bank-accounts  (public - user deposit page)
 router.get('/', getActiveAccounts);
@@ -17,10 +18,10 @@ router.get('/', getActiveAccounts);
 router.get('/admin', authenticate, authorizeAdmin, getAllAccounts);
 
 // @route   POST /api/admin/bank-accounts  (admin - add account)
-router.post('/admin', authenticate, authorizeAdmin, createAccount);
+router.post('/admin', authenticate, authorizeAdmin, uploadBankQr, createAccount);
 
 // @route   PUT /api/admin/bank-accounts/:id  (admin - update)
-router.put('/admin/:id', authenticate, authorizeAdmin, updateAccount);
+router.put('/admin/:id', authenticate, authorizeAdmin, uploadBankQr, updateAccount);
 
 // @route   DELETE /api/admin/bank-accounts/:id  (admin - delete)
 router.delete('/admin/:id', authenticate, authorizeAdmin, deleteAccount);

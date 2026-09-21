@@ -4,21 +4,21 @@ const bankAccountSchema = new mongoose.Schema(
   {
     bankName: {
       type: String,
-      required: [true, 'Bank name is required'],
       trim: true,
       maxlength: [100, 'Bank name cannot exceed 100 characters'],
+      default: '',
     },
     accountHolder: {
       type: String,
-      required: [true, 'Account holder name is required'],
       trim: true,
       maxlength: [150, 'Account holder name cannot exceed 150 characters'],
+      default: '',
     },
     accountNumber: {
       type: String,
-      required: [true, 'Account number is required'],
       trim: true,
       maxlength: [30, 'Account number cannot exceed 30 characters'],
+      default: '',
     },
     iban: {
       type: String,
@@ -28,8 +28,22 @@ const bankAccountSchema = new mongoose.Schema(
     },
     accountType: {
       type: String,
-      enum: ['BANK', 'JAZZCASH', 'EASYPAISA', 'OTHER'],
-      default: 'BANK',
+      enum: ['LOCAL_BANK', 'BEP20'],
+      default: 'LOCAL_BANK',
+    },
+    walletAddress: {
+      type: String,
+      trim: true,
+      default: '',
+      maxlength: [200, 'Wallet address cannot exceed 200 characters'],
+    },
+    qrCodeImage: {
+      type: String,
+      default: '',
+    },
+    qrCodePublicId: {
+      type: String,
+      default: '',
     },
     isActive: {
       type: Boolean,

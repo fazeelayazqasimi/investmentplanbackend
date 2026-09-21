@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { getProfile, updateProfile, activateAccount, getPublicConfig, getProgressData, searchMyDownlines } = require('../controllers/userController');
+const { getProfile, updateProfile, activateAccount, activateDownline, depositDownline, getPublicConfig, getProgressData, searchMyDownlines } = require('../controllers/userController');
 const {
   getMyUpline,
   getMyDownlines,
@@ -26,6 +26,12 @@ router.put('/profile', authenticate, updateProfile);
 
 // @route   POST /api/users/activate
 router.post('/activate', authenticate, activateAccount);
+
+// @route   POST /api/users/activate-downline
+router.post('/activate-downline', authenticate, activateDownline);
+
+// @route   POST /api/users/deposit-downline
+router.post('/deposit-downline', authenticate, depositDownline);
 
 // @route   GET /api/users/progress
 router.get('/progress', authenticate, getProgressData);

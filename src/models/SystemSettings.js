@@ -105,6 +105,16 @@ const systemSettingsSchema = new mongoose.Schema(
     },
 
     // ==========================================
+    // SELF-INVESTMENT E-WALLET MAX PERCENTAGE
+    // ==========================================
+    selfInvestmentEwalletMaxPercentage: {
+      type: Number,
+      default: 0,
+      min: [0, 'Percentage cannot be negative'],
+      max: [100, 'Percentage cannot exceed 100'],
+    },
+
+    // ==========================================
     // INCOME SETTINGS
     // ==========================================
     // Legacy flat fields (kept for backward compatibility)
@@ -194,6 +204,22 @@ const systemSettingsSchema = new mongoose.Schema(
       default: 0,
       min: [0, 'Percentage cannot be negative'],
       max: [100, 'Percentage cannot exceed 100'],
+    },
+
+    // ==========================================
+    // E-WALLET DOWNLINE ACTIVATION
+    // ==========================================
+    ewalletDownlineActivationEnabled: {
+      type: Boolean,
+      default: false,
+    },
+
+    // ==========================================
+    // E-WALLET DOWNLINE DEPOSIT
+    // ==========================================
+    ewalletDownlineDepositEnabled: {
+      type: Boolean,
+      default: false,
     },
 
     // ==========================================
