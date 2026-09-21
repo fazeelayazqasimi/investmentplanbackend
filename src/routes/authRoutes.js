@@ -1,7 +1,15 @@
 const express = require('express');
 const router = express.Router();
 
-const { register, login, logout, getMe } = require('../controllers/authController');
+const {
+  register,
+  login,
+  resendOtp,
+  forgotPassword,
+  resetPassword,
+  logout,
+  getMe,
+} = require('../controllers/authController');
 const {
   registerValidationRules,
   loginValidationRules,
@@ -18,6 +26,15 @@ router.post('/register', registerValidationRules, validateRequest, register);
 
 // @route   POST /api/auth/login
 router.post('/login', loginValidationRules, validateRequest, login);
+
+// @route   POST /api/auth/resend-otp (for password reset)
+router.post('/resend-otp', resendOtp);
+
+// @route   POST /api/auth/forgot-password
+router.post('/forgot-password', forgotPassword);
+
+// @route   POST /api/auth/reset-password
+router.post('/reset-password', resetPassword);
 
 // ==========================================
 // PRIVATE ROUTES

@@ -77,6 +77,10 @@ const userSchema = new mongoose.Schema(
       ref: 'Rank',
       default: null,
     },
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
   },
   {
     timestamps: true,

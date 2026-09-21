@@ -1,11 +1,36 @@
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const User = require('../models/User');
+const VerificationCode = require('../models/VerificationCode');
 const generateToken = require('../utils/generateToken');
+const { sendOtpEmail } = require('../utils/emailService');
 const bonusService = require('../services/bonusService');
 
 // ==========================================
-// @desc    Register a new user
+// Helper: Generate 4-digit OTP
+// ==========================================
+const generateOtp = () => {
+  return Math.floor(1000 + Math.random() * 9000).toString();
+};
+
+// ==========================================
+// Helper: Create and send OTP
+// ==========================================
+const createAndSendOtp = async (email, purpose) => {
+  // Delete any existing unused codes for this email+purpose
+  await VerificationCode.deleteMany({ email, purpose, used: false });
+
+  const code = generateOtp();
+  const expiresAt = new Date(Date.now() + 1 * 60 * 1000); // 1 minute
+
+  await VerificationCode.create({ email, code, purpose, expiresAt });
+  await sendOtpEmail(email, code, purpose);
+
+  return code;
+};
+
+// ==========================================
+// @desc    Register a new user (sends OTP, no token yet)
 // @route   POST /api/auth/register
 // @access  Public
 // ==========================================
@@ -52,12 +77,10 @@ const register = asyncHandler(async (req, res) => {
   let referredBy = null;
   if (referralCode) {
     const upline = await User.findOne({ referralCode: referralCode.toUpperCase() });
-
     if (!upline) {
       res.status(400);
       throw new Error('Invalid referral code');
     }
-
     referredBy = upline._id;
   }
 
@@ -93,6 +116,99 @@ const register = asyncHandler(async (req, res) => {
   } finally {
     session.endSession();
   }
+});
+
+// ==========================================
+// @desc    Verify email with OTP
+// @route   POST /api/auth/verify-email
+// @access  Public
+// ==========================================
+const verifyEmail = asyncHandler(async (req, res) => {
+  const { email, code } = req.body;
+
+  if (!email || !code) {
+    res.status(400);
+    throw new Error('Email and verification code are required');
+  }
+
+  const verification = await VerificationCode.findOne({
+    email: email.toLowerCase(),
+    purpose: 'EMAIL_VERIFICATION',
+    used: false,
+  }).sort({ createdAt: -1 });
+
+  if (!verification) {
+    res.status(400);
+    throw new Error('No verification code found. Please request a new one.');
+  }
+
+  if (verification.expiresAt < new Date()) {
+    res.status(400);
+    throw new Error('Verification code has expired. Please request a new one.');
+  }
+
+  if (verification.code !== code.toString()) {
+    res.status(400);
+    throw new Error('Invalid verification code');
+  }
+
+  // Mark code as used
+  verification.used = true;
+  await verification.save();
+
+  // Update user
+  const user = await User.findOne({ email: email.toLowerCase() });
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  user.isEmailVerified = true;
+  await user.save();
+
+  const token = generateToken(user._id, user.role);
+
+  res.status(200).json({
+    success: true,
+    message: 'Email verified successfully',
+    data: {
+      user: user.toSafeObject(),
+      token,
+    },
+  });
+});
+
+// ==========================================
+// @desc    Resend OTP (verification or password reset)
+// @route   POST /api/auth/resend-otp
+// @access  Public
+// ==========================================
+const resendOtp = asyncHandler(async (req, res) => {
+  const { email, purpose = 'EMAIL_VERIFICATION' } = req.body;
+
+  if (!email) {
+    res.status(400);
+    throw new Error('Email is required');
+  }
+
+  // Rate limit: max 1 OTP per 30 seconds
+  const recentCode = await VerificationCode.findOne({
+    email: email.toLowerCase(),
+    purpose,
+    createdAt: { $gt: new Date(Date.now() - 30 * 1000) },
+  });
+
+  if (recentCode) {
+    res.status(429);
+    throw new Error('Please wait 30 seconds before requesting a new code');
+  }
+
+  await createAndSendOtp(email.toLowerCase(), purpose);
+
+  res.status(200).json({
+    success: true,
+    message: 'Verification code sent to your email',
+  });
 });
 
 // ==========================================
@@ -140,6 +256,12 @@ const login = asyncHandler(async (req, res) => {
     throw new Error('Your account is not active. Please contact support.');
   }
 
+  // Check email verification
+  if (!user.isEmailVerified) {
+    res.status(403);
+    throw new Error('Please verify your email before logging in');
+  }
+
   const token = generateToken(user._id, user.role);
 
   res.status(200).json({
@@ -153,14 +275,101 @@ const login = asyncHandler(async (req, res) => {
 });
 
 // ==========================================
+// @desc    Forgot password - send OTP
+// @route   POST /api/auth/forgot-password
+// @access  Public
+// ==========================================
+const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    res.status(400);
+    throw new Error('Email is required');
+  }
+
+  const user = await User.findOne({ email: email.toLowerCase() });
+  if (!user) {
+    // Don't reveal if user exists or not
+    res.status(200).json({
+      success: true,
+      message: 'If an account exists with this email, a verification code has been sent.',
+    });
+    return;
+  }
+
+  await createAndSendOtp(email.toLowerCase(), 'PASSWORD_RESET');
+
+  res.status(200).json({
+    success: true,
+    message: 'If an account exists with this email, a verification code has been sent.',
+  });
+});
+
+// ==========================================
+// @desc    Reset password with OTP
+// @route   POST /api/auth/reset-password
+// @access  Public
+// ==========================================
+const resetPassword = asyncHandler(async (req, res) => {
+  const { email, code, newPassword } = req.body;
+
+  if (!email || !code || !newPassword) {
+    res.status(400);
+    throw new Error('Email, verification code, and new password are required');
+  }
+
+  if (newPassword.length < 6) {
+    res.status(400);
+    throw new Error('Password must be at least 6 characters');
+  }
+
+  const verification = await VerificationCode.findOne({
+    email: email.toLowerCase(),
+    purpose: 'PASSWORD_RESET',
+    used: false,
+  }).sort({ createdAt: -1 });
+
+  if (!verification) {
+    res.status(400);
+    throw new Error('No verification code found. Please request a new one.');
+  }
+
+  if (verification.expiresAt < new Date()) {
+    res.status(400);
+    throw new Error('Verification code has expired. Please request a new one.');
+  }
+
+  if (verification.code !== code.toString()) {
+    res.status(400);
+    throw new Error('Invalid verification code');
+  }
+
+  // Mark code as used
+  verification.used = true;
+  await verification.save();
+
+  // Update password
+  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  user.password = newPassword;
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Password reset successfully. You can now login with your new password.',
+  });
+});
+
+// ==========================================
 // @desc    Logout user
 // @route   POST /api/auth/logout
 // @access  Private
 // ==========================================
 const logout = asyncHandler(async (req, res) => {
-  // Stateless JWT: logout is handled client-side by discarding the token.
-  // This endpoint exists for a consistent API contract and to allow
-  // future enhancements (e.g. token blacklisting) without breaking clients.
   res.status(200).json({
     success: true,
     message: 'Logout successful',
@@ -173,7 +382,6 @@ const logout = asyncHandler(async (req, res) => {
 // @access  Private
 // ==========================================
 const getMe = asyncHandler(async (req, res) => {
-  // req.user is attached by the auth middleware (next step)
   const user = await User.findById(req.user.id);
 
   if (!user) {
@@ -192,7 +400,11 @@ const getMe = asyncHandler(async (req, res) => {
 
 module.exports = {
   register,
+  verifyEmail,
+  resendOtp,
   login,
+  forgotPassword,
+  resetPassword,
   logout,
   getMe,
 };
