@@ -224,6 +224,7 @@ const getTransferSettings = asyncHandler(async (req, res) => {
       ewalletDownlineActivationEnabled: settings.ewalletDownlineActivationEnabled,
       ewalletDownlineDepositEnabled: settings.ewalletDownlineDepositEnabled,
       selfInvestmentEwalletMaxPercentage: settings.selfInvestmentEwalletMaxPercentage,
+      withdrawalMinAmount: settings.withdrawalMinAmount || 0,
       withdrawalMaxAmount: settings.withdrawalMaxAmount || 0,
     },
   });

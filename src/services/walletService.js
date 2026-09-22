@@ -849,8 +849,15 @@ const requestWithdrawal = async (userId, { amount, balanceField, payoutMethod, p
     throw error;
   }
 
-  // Check withdrawal max amount limit
+  // Check withdrawal min amount limit
   const settings = await SystemSettings.getSettings();
+  if (settings.withdrawalMinAmount > 0 && roundedAmount < settings.withdrawalMinAmount) {
+    const error = new Error(`Minimum withdrawal amount is $${settings.withdrawalMinAmount}. You entered: $${roundedAmount}`);
+    error.statusCode = 400;
+    throw error;
+  }
+
+  // Check withdrawal max amount limit
   if (settings.withdrawalMaxAmount > 0 && roundedAmount > settings.withdrawalMaxAmount) {
     const error = new Error(`Maximum withdrawal amount is $${settings.withdrawalMaxAmount}. You entered: $${roundedAmount}`);
     error.statusCode = 400;

@@ -90,7 +90,7 @@ const register = asyncHandler(async (req, res) => {
     let newUser;
     await session.withTransaction(async () => {
       newUser = await User.create(
-        [{ name, email, phone, password, referredBy, additionalEmails: extraEmails }],
+        [{ name, email, phone, password, referredBy, additionalEmails: extraEmails, isEmailVerified: true }],
         { session }
       );
 
@@ -254,12 +254,6 @@ const login = asyncHandler(async (req, res) => {
   if (user.accountStatus !== 'ACTIVE') {
     res.status(403);
     throw new Error('Your account is not active. Please contact support.');
-  }
-
-  // Check email verification
-  if (!user.isEmailVerified) {
-    res.status(403);
-    throw new Error('Please verify your email before logging in');
   }
 
   const token = generateToken(user._id, user.role);

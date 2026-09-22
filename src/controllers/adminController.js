@@ -558,6 +558,7 @@ const updateSettings = asyncHandler(async (req, res) => {
     // Pending Release
     'pendingReleaseMultiplier',
     // Withdrawal
+    'withdrawalMinAmount',
     'withdrawalMaxAmount',
   ];
   allowedScalars.forEach((key) => {
