@@ -29,8 +29,8 @@ const registerValidationRules = [
   body('password')
     .notEmpty()
     .withMessage('Password is required')
-    .isLength({ min: 6 })
-    .withMessage('Password must be at least 6 characters'),
+    .isLength({ min: 8 })
+    .withMessage('Password must be at least 8 characters'),
 
   body('confirmPassword')
     .notEmpty()
@@ -41,6 +41,10 @@ const registerValidationRules = [
       }
       return true;
     }),
+
+  body('emailVerifyToken')
+    .notEmpty()
+    .withMessage('Email verification is required'),
 
   body('referralCode')
     .optional({ checkFalsy: true })
@@ -76,7 +80,44 @@ const loginValidationRules = [
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
+// ==========================================
+// SEND REGISTRATION OTP VALIDATION RULES (step 1)
+// ==========================================
+const sendOtpValidationRules = [
+  body('email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email is required')
+    .isEmail()
+    .withMessage('Please provide a valid email address')
+    .normalizeEmail(),
+];
+
+// ==========================================
+// VERIFY EMAIL VALIDATION RULES (step 2)
+// ==========================================
+const verifyEmailValidationRules = [
+  body('email')
+    .trim()
+    .notEmpty()
+    .withMessage('Email is required')
+    .isEmail()
+    .withMessage('Please provide a valid email address')
+    .normalizeEmail(),
+
+  body('code')
+    .trim()
+    .notEmpty()
+    .withMessage('Verification code is required')
+    .isLength({ min: 4, max: 4 })
+    .withMessage('Verification code must be 4 digits')
+    .isNumeric()
+    .withMessage('Verification code must be numeric'),
+];
+
 module.exports = {
   registerValidationRules,
   loginValidationRules,
+  sendOtpValidationRules,
+  verifyEmailValidationRules,
 };

@@ -3,6 +3,8 @@ const router = express.Router();
 
 const {
   register,
+  sendRegisterOtp,
+  verifyEmail,
   login,
   resendOtp,
   forgotPassword,
@@ -13,6 +15,8 @@ const {
 const {
   registerValidationRules,
   loginValidationRules,
+  sendOtpValidationRules,
+  verifyEmailValidationRules,
 } = require('../validators/authValidators');
 const validateRequest = require('../middleware/validateRequest');
 const { authenticate } = require('../middleware/authMiddleware');
@@ -21,8 +25,14 @@ const { authenticate } = require('../middleware/authMiddleware');
 // PUBLIC ROUTES
 // ==========================================
 
+// @route   POST /api/auth/register/send-otp (step 1: send code to email)
+router.post('/register/send-otp', sendOtpValidationRules, validateRequest, sendRegisterOtp);
+
 // @route   POST /api/auth/register
 router.post('/register', registerValidationRules, validateRequest, register);
+
+// @route   POST /api/auth/verify-email (step 2: verify 4-digit code)
+router.post('/verify-email', verifyEmailValidationRules, validateRequest, verifyEmail);
 
 // @route   POST /api/auth/login
 router.post('/login', loginValidationRules, validateRequest, login);

@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const VerificationCode = require('../models/VerificationCode');
 const generateToken = require('../utils/generateToken');
@@ -30,12 +31,77 @@ const createAndSendOtp = async (email, purpose) => {
 };
 
 // ==========================================
-// @desc    Register a new user (sends OTP, no token yet)
+// @desc    Send registration OTP (step 1: email only)
+// @route   POST /api/auth/register/send-otp
+// @access  Public
+// ==========================================
+const sendRegisterOtp = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    res.status(400);
+    throw new Error('Email is required');
+  }
+
+  const normalized = email.toLowerCase();
+
+  // Reject already-registered emails at step 1
+  const existingUser = await User.findOne({
+    $or: [{ email: normalized }, { additionalEmails: normalized }],
+  });
+  if (existingUser) {
+    res.status(409);
+    throw new Error('An account with this email already exists');
+  }
+
+  // Rate limit: max 1 OTP per 60 seconds
+  const recentCode = await VerificationCode.findOne({
+    email: normalized,
+    purpose: 'EMAIL_VERIFICATION',
+    createdAt: { $gt: new Date(Date.now() - 60 * 1000) },
+  });
+  if (recentCode) {
+    res.status(429);
+    throw new Error('Please wait 60 seconds before requesting a new code');
+  }
+
+  await createAndSendOtp(normalized, 'EMAIL_VERIFICATION');
+
+  res.status(200).json({
+    success: true,
+    message: 'Verification code sent to your email',
+  });
+});
+
+// ==========================================
+// @desc    Register a new user (requires verified email token)
 // @route   POST /api/auth/register
 // @access  Public
 // ==========================================
 const register = asyncHandler(async (req, res) => {
-  const { name, email, phone, password, referralCode, additionalEmails } = req.body;
+  const { name, email, phone, password, referralCode, additionalEmails, emailVerifyToken } = req.body;
+
+  // Step 2 must be completed: verify signed email token (15-min expiry)
+  if (!emailVerifyToken) {
+    res.status(400);
+    throw new Error('Email verification required. Please verify your email first.');
+  }
+
+  let decoded;
+  try {
+    decoded = jwt.verify(emailVerifyToken, process.env.JWT_SECRET);
+  } catch (err) {
+    res.status(400);
+    throw new Error(
+      err.name === 'TokenExpiredError'
+        ? 'Email verification expired. Please verify your email again.'
+        : 'Invalid email verification token'
+    );
+  }
+  if (decoded.purpose !== 'EMAIL_VERIFICATION' || decoded.email !== email.toLowerCase()) {
+    res.status(400);
+    throw new Error('Invalid email verification token');
+  }
 
   // Check for duplicate primary email
   const existingUser = await User.findOne({ email: email.toLowerCase() });
@@ -156,24 +222,19 @@ const verifyEmail = asyncHandler(async (req, res) => {
   verification.used = true;
   await verification.save();
 
-  // Update user
-  const user = await User.findOne({ email: email.toLowerCase() });
-  if (!user) {
-    res.status(404);
-    throw new Error('User not found');
-  }
-
-  user.isEmailVerified = true;
-  await user.save();
-
-  const token = generateToken(user._id, user.role);
+  // User doesn't exist yet (register step 2) — issue a short-lived signed
+  // token that register (step 3) must present to prove email ownership.
+  const emailVerifyToken = jwt.sign(
+    { email: email.toLowerCase(), purpose: 'EMAIL_VERIFICATION' },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m' }
+  );
 
   res.status(200).json({
     success: true,
     message: 'Email verified successfully',
     data: {
-      user: user.toSafeObject(),
-      token,
+      emailVerifyToken,
     },
   });
 });
@@ -191,16 +252,16 @@ const resendOtp = asyncHandler(async (req, res) => {
     throw new Error('Email is required');
   }
 
-  // Rate limit: max 1 OTP per 30 seconds
+  // Rate limit: max 1 OTP per 60 seconds
   const recentCode = await VerificationCode.findOne({
     email: email.toLowerCase(),
     purpose,
-    createdAt: { $gt: new Date(Date.now() - 30 * 1000) },
+    createdAt: { $gt: new Date(Date.now() - 60 * 1000) },
   });
 
   if (recentCode) {
     res.status(429);
-    throw new Error('Please wait 30 seconds before requesting a new code');
+    throw new Error('Please wait 60 seconds before requesting a new code');
   }
 
   await createAndSendOtp(email.toLowerCase(), purpose);
@@ -312,9 +373,9 @@ const resetPassword = asyncHandler(async (req, res) => {
     throw new Error('Email, verification code, and new password are required');
   }
 
-  if (newPassword.length < 6) {
+  if (newPassword.length < 8) {
     res.status(400);
-    throw new Error('Password must be at least 6 characters');
+    throw new Error('Password must be at least 8 characters');
   }
 
   const verification = await VerificationCode.findOne({
@@ -394,6 +455,7 @@ const getMe = asyncHandler(async (req, res) => {
 
 module.exports = {
   register,
+  sendRegisterOtp,
   verifyEmail,
   resendOtp,
   login,
