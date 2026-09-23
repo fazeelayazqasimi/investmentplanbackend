@@ -1443,7 +1443,7 @@ const adjustUserWallet = asyncHandler(async (req, res) => {
 });
 
 // ==========================================
-// @desc    Admin approves a pending withdrawal (debits user wallet)
+// @desc    Admin approves a pending withdrawal
 // @route   POST /api/admin/withdrawals/:id/approve
 // @access  Private (Admin)
 // ==========================================
@@ -1452,7 +1452,7 @@ const approveWithdrawal = asyncHandler(async (req, res) => {
 
   const transaction = await walletService.approveWithdrawal(id, req.user.id);
 
-  res.status(200).json({ success: true, message: 'Withdrawal approved and wallet debited', data: { transaction } });
+  res.status(200).json({ success: true, message: 'Withdrawal approved', data: { transaction } });
 });
 
 // ==========================================
@@ -1466,7 +1466,7 @@ const rejectWithdrawal = asyncHandler(async (req, res) => {
 
   const transaction = await walletService.rejectWithdrawal(id, req.user.id, reason || '');
 
-  res.status(200).json({ success: true, message: 'Withdrawal rejected', data: { transaction } });
+  res.status(200).json({ success: true, message: 'Withdrawal rejected and amount refunded to user', data: { transaction } });
 });
 
 // ==========================================

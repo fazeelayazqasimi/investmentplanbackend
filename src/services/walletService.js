@@ -835,69 +835,88 @@ const requestWithdrawal = async (userId, { amount, balanceField, payoutMethod, p
     throw error;
   }
 
-  const wallet = await Wallet.findOne({ user: userId });
-  if (!wallet) {
-    const error = new Error('Wallet not found');
-    error.statusCode = 404;
-    throw error;
+  const session = await mongoose.startSession();
+
+  try {
+    let transaction;
+
+    await session.withTransaction(async () => {
+      const wallet = await Wallet.findOne({ user: userId }).session(session);
+      if (!wallet) {
+        const error = new Error('Wallet not found');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      const currentBalance = wallet[balanceField] || 0;
+      if (currentBalance < roundedAmount) {
+        const error = new Error(`Insufficient balance. Available: $${currentBalance}`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      // Check withdrawal min amount limit
+      const settings = await SystemSettings.getSettings();
+      if (settings.withdrawalMinAmount > 0 && roundedAmount < settings.withdrawalMinAmount) {
+        const error = new Error(`Minimum withdrawal amount is $${settings.withdrawalMinAmount}. You entered: $${roundedAmount}`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      // Check withdrawal max amount limit
+      if (settings.withdrawalMaxAmount > 0 && roundedAmount > settings.withdrawalMaxAmount) {
+        const error = new Error(`Maximum withdrawal amount is $${settings.withdrawalMaxAmount}. You entered: $${roundedAmount}`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      // Compute withdrawal fee (deducted from amount; user receives net)
+      const feePercentage = Number(settings.withdrawalFeePercentage) || 0;
+      const fee = roundToTwoDecimals((roundedAmount * feePercentage) / 100);
+      const netAmount = roundToTwoDecimals(roundedAmount - fee);
+
+      const metadata = {
+        payoutMethod,
+        payoutDetails,
+        notes,
+        balanceField,
+        feePercentage,
+        fee,
+        netAmount,
+        balanceHeld: true,
+      };
+
+      const description = fee > 0
+        ? `Withdrawal request: $${roundedAmount} from ${balanceField} via ${payoutMethod} (fee ${feePercentage}% = $${fee}, net $${netAmount})`
+        : `Withdrawal request: $${roundedAmount} from ${balanceField} via ${payoutMethod}`;
+
+      // Deduct balance immediately (held until admin approve/reject)
+      wallet[balanceField] = roundToTwoDecimals(currentBalance - roundedAmount);
+      await wallet.save({ session });
+
+      const [tx] = await Transaction.create([{
+        user: userId,
+        amount: roundedAmount,
+        type: 'WITHDRAWAL',
+        status: 'PENDING',
+        description,
+        createdBy: userId,
+        metadata,
+      }], { session });
+
+      transaction = tx;
+    });
+
+    return transaction;
+  } finally {
+    session.endSession();
   }
-
-  const currentBalance = wallet[balanceField] || 0;
-  if (currentBalance < roundedAmount) {
-    const error = new Error(`Insufficient balance. Available: $${currentBalance}`);
-    error.statusCode = 400;
-    throw error;
-  }
-
-  // Check withdrawal min amount limit
-  const settings = await SystemSettings.getSettings();
-  if (settings.withdrawalMinAmount > 0 && roundedAmount < settings.withdrawalMinAmount) {
-    const error = new Error(`Minimum withdrawal amount is $${settings.withdrawalMinAmount}. You entered: $${roundedAmount}`);
-    error.statusCode = 400;
-    throw error;
-  }
-
-  // Check withdrawal max amount limit
-  if (settings.withdrawalMaxAmount > 0 && roundedAmount > settings.withdrawalMaxAmount) {
-    const error = new Error(`Maximum withdrawal amount is $${settings.withdrawalMaxAmount}. You entered: $${roundedAmount}`);
-    error.statusCode = 400;
-    throw error;
-  }
-
-  // Compute withdrawal fee (deducted from amount; user receives net)
-  const feePercentage = Number(settings.withdrawalFeePercentage) || 0;
-  const fee = roundToTwoDecimals((roundedAmount * feePercentage) / 100);
-  const netAmount = roundToTwoDecimals(roundedAmount - fee);
-
-  const metadata = {
-    payoutMethod,
-    payoutDetails,
-    notes,
-    balanceField,
-    feePercentage,
-    fee,
-    netAmount,
-  };
-
-  const description = fee > 0
-    ? `Withdrawal request: $${roundedAmount} from ${balanceField} via ${payoutMethod} (fee ${feePercentage}% = $${fee}, net $${netAmount})`
-    : `Withdrawal request: $${roundedAmount} from ${balanceField} via ${payoutMethod}`;
-
-  const transaction = await Transaction.create({
-    user: userId,
-    amount: roundedAmount,
-    type: 'WITHDRAWAL',
-    status: 'PENDING',
-    description,
-    createdBy: userId,
-    metadata,
-  });
-
-  return transaction;
 };
 
 // ==========================================
-// APPROVE WITHDRAWAL (admin approves → debit wallet)
+// APPROVE WITHDRAWAL (admin approves)
+// New requests (metadata.balanceHeld): balance already deducted at request time.
+// Legacy requests (no balanceHeld flag): debit now (old behavior).
 // ==========================================
 const approveWithdrawal = async (transactionId, adminId) => {
   const session = await mongoose.startSession();
@@ -925,6 +944,7 @@ const approveWithdrawal = async (transactionId, adminId) => {
       }
 
       const balanceField = tx.metadata?.balanceField || 'mainBalance';
+      const alreadyHeld = tx.metadata?.balanceHeld === true;
 
       let wallet = await Wallet.findOne({ user: tx.user }).session(session);
       if (!wallet) {
@@ -933,14 +953,17 @@ const approveWithdrawal = async (transactionId, adminId) => {
         throw error;
       }
 
-      const currentBalance = wallet[balanceField] || 0;
-      if (currentBalance < tx.amount) {
-        const error = new Error(`Insufficient balance. Available: $${currentBalance}`);
-        error.statusCode = 400;
-        throw error;
+      if (!alreadyHeld) {
+        // Legacy pending withdrawal: balance was never held, debit now
+        const currentBalance = wallet[balanceField] || 0;
+        if (currentBalance < tx.amount) {
+          const error = new Error(`Insufficient balance. Available: $${currentBalance}`);
+          error.statusCode = 400;
+          throw error;
+        }
+        wallet[balanceField] = roundToTwoDecimals(currentBalance - tx.amount);
       }
 
-      wallet[balanceField] = roundToTwoDecimals(currentBalance - tx.amount);
       wallet.totalWithdrawn = roundToTwoDecimals((wallet.totalWithdrawn || 0) + tx.amount);
       await wallet.save({ session });
 
@@ -959,38 +982,66 @@ const approveWithdrawal = async (transactionId, adminId) => {
 };
 
 // ==========================================
-// REJECT WITHDRAWAL (admin rejects → no balance change)
+// REJECT WITHDRAWAL (admin rejects → refund held balance)
 // ==========================================
 const rejectWithdrawal = async (transactionId, adminId, reason = '') => {
-  const tx = await Transaction.findById(transactionId);
+  const session = await mongoose.startSession();
 
-  if (!tx) {
-    const error = new Error('Withdrawal request not found');
-    error.statusCode = 404;
-    throw error;
-  }
-  if (tx.type !== 'WITHDRAWAL') {
-    const error = new Error('Transaction is not a withdrawal request');
-    error.statusCode = 400;
-    throw error;
-  }
-  if (tx.status !== 'PENDING') {
-    const error = new Error(`Withdrawal already ${tx.status.toLowerCase()}`);
-    error.statusCode = 400;
-    throw error;
-  }
+  try {
+    let result;
 
-  tx.status = 'REJECTED';
-  tx.createdBy = adminId;
-  tx.description = reason ? `Withdrawal rejected: ${reason}` : 'Withdrawal rejected';
-  if (tx.metadata) {
-    tx.metadata.rejectionReason = reason;
-  } else {
-    tx.metadata = { rejectionReason: reason };
-  }
-  await tx.save();
+    await session.withTransaction(async () => {
+      const tx = await Transaction.findById(transactionId).session(session);
 
-  return tx;
+      if (!tx) {
+        const error = new Error('Withdrawal request not found');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (tx.type !== 'WITHDRAWAL') {
+        const error = new Error('Transaction is not a withdrawal request');
+        error.statusCode = 400;
+        throw error;
+      }
+      if (tx.status !== 'PENDING') {
+        const error = new Error(`Withdrawal already ${tx.status.toLowerCase()}`);
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const balanceField = tx.metadata?.balanceField || 'mainBalance';
+      const alreadyHeld = tx.metadata?.balanceHeld === true;
+
+      // Refund amount that was held (deducted) at request time
+      if (alreadyHeld) {
+        const wallet = await Wallet.findOne({ user: tx.user }).session(session);
+        if (!wallet) {
+          const error = new Error('User wallet not found');
+          error.statusCode = 404;
+          throw error;
+        }
+        wallet[balanceField] = roundToTwoDecimals((wallet[balanceField] || 0) + tx.amount);
+        await wallet.save({ session });
+      }
+
+      tx.status = 'REJECTED';
+      tx.createdBy = adminId;
+      tx.description = reason ? `Withdrawal rejected: ${reason}` : 'Withdrawal rejected';
+      if (tx.metadata) {
+        tx.metadata.rejectionReason = reason;
+        tx.metadata.balanceHeld = false;
+      } else {
+        tx.metadata = { rejectionReason: reason, balanceHeld: false };
+      }
+      await tx.save({ session });
+
+      result = tx;
+    });
+
+    return result;
+  } finally {
+    session.endSession();
+  }
 };
 
 module.exports = {

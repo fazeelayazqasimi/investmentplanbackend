@@ -261,7 +261,7 @@ const requestWithdrawal = asyncHandler(async (req, res) => {
 
   res.status(201).json({
     success: true,
-    message: 'Your withdrawal request has been submitted. Admin will review and approve within 72 hours.',
+    message: 'Withdrawal request submitted. The amount has been deducted from your balance and will be refunded if the admin rejects it. Review typically completes within 72 hours.',
     data: { transaction },
   });
 });
