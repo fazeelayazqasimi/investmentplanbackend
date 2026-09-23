@@ -67,8 +67,15 @@ const createInvestment = async ({
       throw error;
     }
 
+    // Self-investment: E-Wallet payment option must be enabled by admin
+    if (createdByRole === 'USER' && ewalletAmt > 0 && !settings.ewalletInvestmentEnabled) {
+      const error = new Error('E-Wallet for investment is currently disabled by admin');
+      error.statusCode = 400;
+      throw error;
+    }
+
     // Self-investment E-Wallet max percentage enforcement
-    if (createdByRole === 'USER' && settings.selfInvestmentEwalletMaxPercentage > 0) {
+    if (createdByRole === 'USER' && settings.ewalletInvestmentEnabled && ewalletAmt > 0 && settings.selfInvestmentEwalletMaxPercentage > 0) {
       const maxEwallet = roundToTwoDecimals(roundedAmount * settings.selfInvestmentEwalletMaxPercentage / 100);
       if (ewalletAmt > maxEwallet) {
         const error = new Error(`E-Wallet cannot exceed ${settings.selfInvestmentEwalletMaxPercentage}% of investment amount (max $${maxEwallet})`);

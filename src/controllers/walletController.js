@@ -223,6 +223,7 @@ const getTransferSettings = asyncHandler(async (req, res) => {
       ewalletMaxPercentage: settings.ewalletMaxPercentage,
       ewalletDownlineActivationEnabled: settings.ewalletDownlineActivationEnabled,
       ewalletDownlineDepositEnabled: settings.ewalletDownlineDepositEnabled,
+      ewalletInvestmentEnabled: settings.ewalletInvestmentEnabled,
       selfInvestmentEwalletMaxPercentage: settings.selfInvestmentEwalletMaxPercentage,
       withdrawalMinAmount: settings.withdrawalMinAmount || 0,
       withdrawalMaxAmount: settings.withdrawalMaxAmount || 0,

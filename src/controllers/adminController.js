@@ -529,6 +529,7 @@ const updateSettings = asyncHandler(async (req, res) => {
     // E-Wallet
     'ewalletEnabled',
     'ewalletUsageEnabled',
+    'ewalletInvestmentEnabled',
     'signupBonusAmount',
     'uplineSignupBonusAmount',
     // E-Wallet Downline Investment Offer
@@ -1481,7 +1482,7 @@ const listWithdrawals = asyncHandler(async (req, res) => {
   const match = { type: 'WITHDRAWAL' };
   if (status) match.status = status;
 
-  const [transactions, total, totalAgg, pendingAgg, feesAgg] = await Promise.all([
+  const [transactions, total, totalAgg, pendingAgg, feesAgg, rejectedAgg] = await Promise.all([
     Transaction.aggregate([
       { $match: match },
       { $lookup: { from: 'users', localField: 'user', foreignField: '_id', as: 'user' } },
@@ -1507,6 +1508,11 @@ const listWithdrawals = asyncHandler(async (req, res) => {
       { $match: { type: 'WITHDRAWAL', status: 'COMPLETED' } },
       { $group: { _id: null, total: { $sum: { $ifNull: ['$metadata.fee', 0] } } } },
     ]),
+    // Rejected withdrawals (count + amount)
+    Transaction.aggregate([
+      { $match: { type: 'WITHDRAWAL', status: 'REJECTED' } },
+      { $group: { _id: null, total: { $sum: { $abs: '$amount' } }, count: { $sum: 1 } } },
+    ]),
   ]);
 
   res.status(200).json({
@@ -1520,6 +1526,8 @@ const listWithdrawals = asyncHandler(async (req, res) => {
         pendingAmount: pendingAgg[0] ? pendingAgg[0].total : 0,
         pendingCount: pendingAgg[0] ? pendingAgg[0].count : 0,
         feesCollected: feesAgg[0] ? feesAgg[0].total : 0,
+        rejectedAmount: rejectedAgg[0] ? rejectedAgg[0].total : 0,
+        rejectedCount: rejectedAgg[0] ? rejectedAgg[0].count : 0,
       },
     },
   });

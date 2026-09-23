@@ -84,6 +84,11 @@ const systemSettingsSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    // Show/use E-Wallet as a payment option in the self-investment form
+    ewalletInvestmentEnabled: {
+      type: Boolean,
+      default: false,
+    },
     signupBonusAmount: {
       type: Number,
       default: 10,
