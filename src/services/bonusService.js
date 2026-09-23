@@ -3,6 +3,7 @@ const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
+const { getCapStatus, pauseAllActive } = require('./capService');
 
 /**
  * Rounds a number to 2 decimal places safely for currency values.
@@ -201,6 +202,11 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
   wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
   await wallet.save({ session });
 
+  // Network income may have filled the 3X cap → pause all active investments
+  if (getCapStatus(wallet)) {
+    await pauseAllActive(directUplineId, session);
+  }
+
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
 };
 
@@ -320,6 +326,11 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
   wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
   await wallet.save({ session });
 
+  // Network income may have filled the 3X cap → pause all active investments
+  if (getCapStatus(wallet)) {
+    await pauseAllActive(level2UplineId, session);
+  }
+
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
 };
 
@@ -434,6 +445,11 @@ const creditLevelIncomeForLevel = async (level, uplineId, investmentAmount, sess
   // Update tracking — only count what actually went to main wallet
   wallet.totalEligibleEarnings = roundToTwoDecimals(currentEligibleEarnings + mainCredited);
   await wallet.save({ session });
+
+  // Network income may have filled the 3X cap → pause all active investments
+  if (getCapStatus(wallet)) {
+    await pauseAllActive(uplineId, session);
+  }
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };
 };
@@ -589,6 +605,11 @@ const distributeProfitShare = async (totalAmount, adminId) => {
         wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + allowedAmount);
         wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + uplineTotal);
         await wallet.save({ session });
+
+        // Profit share may have filled the 3X cap → pause all active investments
+        if (getCapStatus(wallet)) {
+          await pauseAllActive(uplineId, session);
+        }
       }
     });
 
@@ -704,6 +725,11 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
     wallet.totalEligibleEarnings = roundToTwoDecimals((wallet.totalEligibleEarnings || 0) + allowedAmount);
     wallet.totalProfitShareEarned = roundToTwoDecimals((wallet.totalProfitShareEarned || 0) + shareAmount);
     await wallet.save({ session });
+
+    // Profit share may have filled the 3X cap → pause all active investments
+    if (getCapStatus(wallet)) {
+      await pauseAllActive(currentUserId, session);
+    }
 
     // Advance to next upline in chain
     const currentUser = await User.findById(currentUserId).session(session);

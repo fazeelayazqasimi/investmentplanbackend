@@ -6,6 +6,7 @@ const User = require('../models/User');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
 const bonusService = require('./bonusService');
+const { getCapStatus, pauseAllActive } = require('./capService');
 
 /**
  * Rounds a number to 2 decimal places safely, avoiding common
@@ -260,6 +261,11 @@ const createInvestment = async ({
         }
       } else {
         await userWallet.save({ session });
+      }
+
+      // Pending release may have filled the 3X cap → pause all active investments
+      if (getCapStatus(userWallet)) {
+        await pauseAllActive(targetUserId, session);
       }
 
       // --- LEVEL INCOME (all configured levels) ---
@@ -578,6 +584,11 @@ const createDownlineInvestmentWithEwallet = async ({
         }
       } else {
         await receiverWallet.save({ session });
+      }
+
+      // Pending release may have filled the 3X cap → pause all active investments
+      if (getCapStatus(receiverWallet)) {
+        await pauseAllActive(receiverId, session);
       }
 
       // --- LEVEL INCOME (all configured levels) for receiver's uplines ---

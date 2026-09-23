@@ -6,6 +6,7 @@ const ROIHistory = require('../models/ROIHistory');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
 const bonusService = require('./bonusService');
+const { getCapStatus, pauseAllActive, pauseIfCapFull } = require('./capService');
 
 const DAY_NAMES = [
   'sunday',
@@ -94,6 +95,13 @@ const getApplicableRoiPercentage = (settings, forDate, investment = null) => {
 const processInvestmentRoi = async (investment, settings, forDate) => {
   if (investment.status !== 'ACTIVE') {
     return null; // Never process ROI for non-active investments
+  }
+
+  // Global 2X/3X cap full → pause ALL active investments immediately
+  // (even on 0% days / before start date — cap is wallet-global).
+  const preCapCheck = await pauseIfCapFull(investment.user);
+  if (preCapCheck.paused) {
+    return null;
   }
 
   const roiDate = normalizeToMidnightUTC(forDate);
@@ -190,13 +198,9 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      // If nothing to distribute — ROI cap hit, pause investment
+      // If nothing to distribute — ROI cap hit, pause ALL active investments
       if (finalAppliedRoi <= 0) {
-        await Investment.updateOne(
-          { _id: freshInvestment._id },
-          { $set: { status: 'PAUSED' } },
-          { session }
-        );
+        await pauseAllActive(freshInvestment.user, session);
         return;
       }
 
@@ -230,16 +234,17 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
         const isAtOrAbove = wallet.totalReturned >= walletTotalMaxReturn;
         if (wasBelow && isAtOrAbove) {
           wallet.cycle2xCompletions = (wallet.cycle2xCompletions || 0) + 1;
-          // Pause all active investments — 2X cap hit
-          await Investment.updateMany(
-            { user: freshInvestment.user, status: 'ACTIVE' },
-            { $set: { status: 'PAUSED' } },
-            { session }
-          );
         }
       }
 
       await wallet.save({ session });
+
+      // After this credit, if either 2X or 3X cap is now full → pause ALL
+      // active investments (session-safe: after wallet.save so the fresh
+      // totals are visible to the in-session check).
+      if (getCapStatus(wallet)) {
+        await pauseAllActive(freshInvestment.user, session);
+      }
 
       // Create the ROI ledger record
       const records = await ROIHistory.create(
@@ -365,6 +370,10 @@ const processAllActiveInvestments = async (forDate = new Date()) => {
           description: `Auto-released pending to main - $${releaseAmount} (${pendingMultiplier}× total investment $${totalInv}, remaining cap: $${remaining})`,
           status: 'COMPLETED',
         });
+        // Release may have filled the 3X cap → pause all active investments
+        if (getCapStatus(wallet)) {
+          await pauseAllActive(wallet.user);
+        }
         releasedCount++;
       }
     }
@@ -495,6 +504,12 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
     return null;
   }
 
+  // Global 2X/3X cap full → pause ALL active investments immediately
+  const preCapCheck = await pauseIfCapFull(investment.user);
+  if (preCapCheck.paused) {
+    return null;
+  }
+
   const startMid = investment.startDate ? normalizeToMidnightUTC(investment.startDate) : null;
   if (startMid && roiDate < startMid) return null;
 
@@ -557,13 +572,9 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      // If nothing to distribute — ROI cap hit, pause investment
+      // If nothing to distribute — ROI cap hit, pause ALL active investments
       if (finalAppliedRoi <= 0) {
-        await Investment.updateOne(
-          { _id: freshInvestment._id },
-          { $set: { status: 'PAUSED' } },
-          { session }
-        );
+        await pauseAllActive(freshInvestment.user, session);
         return;
       }
 
@@ -587,16 +598,16 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
         const isAtOrAbove2 = wallet.totalReturned >= walletTotalMaxReturn2;
         if (wasBelow2 && isAtOrAbove2) {
           wallet.cycle2xCompletions = (wallet.cycle2xCompletions || 0) + 1;
-          // Pause all active investments — 2X cap hit
-          await Investment.updateMany(
-            { user: freshInvestment.user, status: 'ACTIVE' },
-            { $set: { status: 'PAUSED' } },
-            { session }
-          );
         }
       }
 
       await wallet.save({ session });
+
+      // After this credit, if either 2X or 3X cap is now full → pause ALL
+      // active investments
+      if (getCapStatus(wallet)) {
+        await pauseAllActive(freshInvestment.user, session);
+      }
 
       const records = await ROIHistory.create(
         [
