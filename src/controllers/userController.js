@@ -5,6 +5,7 @@ const referralService = require('../services/referralService');
 const SystemSettings = require('../models/SystemSettings');
 const Wallet = require('../models/Wallet');
 const User = require('../models/User');
+const { cloudinary } = require('../middleware/uploadMiddleware');
 
 // ==========================================
 // @desc    Get logged-in user's profile
@@ -42,6 +43,42 @@ const updateProfile = asyncHandler(async (req, res) => {
     data: {
       user: updatedUser,
       referralLink,
+    },
+  });
+});
+
+// ==========================================
+// @desc    Upload/update logged-in user's profile photo
+// @route   PUT /api/users/profile/photo
+// @access  Private
+// ==========================================
+const updateProfilePhoto = asyncHandler(async (req, res) => {
+  if (!req.file) {
+    res.status(400);
+    throw new Error('Profile photo is required');
+  }
+
+  const user = await User.findById(req.user.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  if (user.avatarPublicId) {
+    try {
+      await cloudinary.uploader.destroy(user.avatarPublicId);
+    } catch (_) { /* old photo cleanup is best-effort */ }
+  }
+
+  user.avatar = req.file.path;
+  user.avatarPublicId = req.file.filename;
+  await user.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Profile photo updated successfully',
+    data: {
+      user: user.toSafeObject(),
     },
   });
 });
@@ -253,6 +290,7 @@ const depositDownline = asyncHandler(async (req, res) => {
 module.exports = {
   getProfile,
   updateProfile,
+  updateProfilePhoto,
   activateAccount,
   activateDownline,
   depositDownline,

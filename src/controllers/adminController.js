@@ -560,6 +560,7 @@ const updateSettings = asyncHandler(async (req, res) => {
     // Withdrawal
     'withdrawalMinAmount',
     'withdrawalMaxAmount',
+    'withdrawalFeePercentage',
   ];
   allowedScalars.forEach((key) => {
     if (body[key] !== undefined) settings[key] = body[key];
@@ -1480,7 +1481,7 @@ const listWithdrawals = asyncHandler(async (req, res) => {
   const match = { type: 'WITHDRAWAL' };
   if (status) match.status = status;
 
-  const [transactions, total] = await Promise.all([
+  const [transactions, total, totalAgg, pendingAgg, feesAgg] = await Promise.all([
     Transaction.aggregate([
       { $match: match },
       { $lookup: { from: 'users', localField: 'user', foreignField: '_id', as: 'user' } },
@@ -1491,11 +1492,36 @@ const listWithdrawals = asyncHandler(async (req, res) => {
       { $project: { 'user.password': 0, 'user.__v': 0 } },
     ]),
     Transaction.countDocuments(match),
+    // Total withdrawn by users (all withdrawal requests)
+    Transaction.aggregate([
+      { $match: { type: 'WITHDRAWAL' } },
+      { $group: { _id: null, total: { $sum: { $abs: '$amount' } }, count: { $sum: 1 } } },
+    ]),
+    // Still pending (kitna rehta hai — not yet processed)
+    Transaction.aggregate([
+      { $match: { type: 'WITHDRAWAL', status: 'PENDING' } },
+      { $group: { _id: null, total: { $sum: { $abs: '$amount' } }, count: { $sum: 1 } } },
+    ]),
+    // Fees collected from completed withdrawals
+    Transaction.aggregate([
+      { $match: { type: 'WITHDRAWAL', status: 'COMPLETED' } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ['$metadata.fee', 0] } } } },
+    ]),
   ]);
 
   res.status(200).json({
     success: true,
-    data: { transactions, pagination: { page: Number(page), limit: Number(limit), total, totalPages: Math.ceil(total / Number(limit)) } },
+    data: {
+      transactions,
+      pagination: { page: Number(page), limit: Number(limit), total, totalPages: Math.ceil(total / Number(limit)) },
+      stats: {
+        totalWithdrawn: totalAgg[0] ? totalAgg[0].total : 0,
+        totalWithdrawCount: totalAgg[0] ? totalAgg[0].count : 0,
+        pendingAmount: pendingAgg[0] ? pendingAgg[0].total : 0,
+        pendingCount: pendingAgg[0] ? pendingAgg[0].count : 0,
+        feesCollected: feesAgg[0] ? feesAgg[0].total : 0,
+      },
+    },
   });
 });
 

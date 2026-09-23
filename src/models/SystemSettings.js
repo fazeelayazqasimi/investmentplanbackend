@@ -272,6 +272,12 @@ const systemSettingsSchema = new mongoose.Schema(
       default: 0, // 0 = no limit
       min: [0, 'Withdrawal max amount cannot be negative'],
     },
+    withdrawalFeePercentage: {
+      type: Number,
+      default: 0, // 0 = no fee
+      min: [0, 'Withdrawal fee cannot be negative'],
+      max: [100, 'Withdrawal fee cannot exceed 100'],
+    },
 
   },
   {

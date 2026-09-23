@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { getProfile, updateProfile, activateAccount, activateDownline, depositDownline, getPublicConfig, getProgressData, searchMyDownlines } = require('../controllers/userController');
+const { getProfile, updateProfile, updateProfilePhoto, activateAccount, activateDownline, depositDownline, getPublicConfig, getProgressData, searchMyDownlines } = require('../controllers/userController');
 const {
   getMyUpline,
   getMyDownlines,
@@ -10,6 +10,7 @@ const {
   getReferralStats,
 } = require('../controllers/referralController');
 const { authenticate } = require('../middleware/authMiddleware');
+const { uploadProfilePhoto } = require('../middleware/uploadMiddleware');
 
 // ==========================================
 // PRIVATE ROUTES (all require authentication)
@@ -23,6 +24,9 @@ router.get('/config', authenticate, getPublicConfig);
 
 // @route   PUT /api/users/profile
 router.put('/profile', authenticate, updateProfile);
+
+// @route   PUT /api/users/profile/photo
+router.put('/profile/photo', authenticate, uploadProfilePhoto, updateProfilePhoto);
 
 // @route   POST /api/users/activate
 router.post('/activate', authenticate, activateAccount);

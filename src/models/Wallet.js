@@ -129,6 +129,13 @@ const walletSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+
+    // Cumulative total of all approved (COMPLETED) withdrawals.
+    totalWithdrawn: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
   },
   {
     timestamps: true,

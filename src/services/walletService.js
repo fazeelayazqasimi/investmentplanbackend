@@ -864,19 +864,31 @@ const requestWithdrawal = async (userId, { amount, balanceField, payoutMethod, p
     throw error;
   }
 
+  // Compute withdrawal fee (deducted from amount; user receives net)
+  const feePercentage = Number(settings.withdrawalFeePercentage) || 0;
+  const fee = roundToTwoDecimals((roundedAmount * feePercentage) / 100);
+  const netAmount = roundToTwoDecimals(roundedAmount - fee);
+
   const metadata = {
     payoutMethod,
     payoutDetails,
     notes,
     balanceField,
+    feePercentage,
+    fee,
+    netAmount,
   };
+
+  const description = fee > 0
+    ? `Withdrawal request: $${roundedAmount} from ${balanceField} via ${payoutMethod} (fee ${feePercentage}% = $${fee}, net $${netAmount})`
+    : `Withdrawal request: $${roundedAmount} from ${balanceField} via ${payoutMethod}`;
 
   const transaction = await Transaction.create({
     user: userId,
     amount: roundedAmount,
     type: 'WITHDRAWAL',
     status: 'PENDING',
-    description: `Withdrawal request: $${roundedAmount} from ${balanceField} via ${payoutMethod}`,
+    description,
     createdBy: userId,
     metadata,
   });
@@ -929,6 +941,7 @@ const approveWithdrawal = async (transactionId, adminId) => {
       }
 
       wallet[balanceField] = roundToTwoDecimals(currentBalance - tx.amount);
+      wallet.totalWithdrawn = roundToTwoDecimals((wallet.totalWithdrawn || 0) + tx.amount);
       await wallet.save({ session });
 
       tx.status = 'COMPLETED';

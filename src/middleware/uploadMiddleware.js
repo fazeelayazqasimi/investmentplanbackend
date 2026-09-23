@@ -79,4 +79,20 @@ const uploadDepositProof = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
 }).single('proofImage');
 
-module.exports = { cloudinary, uploadAnnouncementImages, uploadChatImages, uploadBankQr, uploadDepositProof };
+// Profile photo upload
+const profilePhotoStorage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: 'finrise/profile-photos',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
+    transformation: [{ width: 500, height: 500, crop: 'fill', gravity: 'face', quality: 'auto' }],
+  },
+});
+
+const uploadProfilePhoto = multer({
+  storage: profilePhotoStorage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 },
+}).single('avatar');
+
+module.exports = { cloudinary, uploadAnnouncementImages, uploadChatImages, uploadBankQr, uploadDepositProof, uploadProfilePhoto };

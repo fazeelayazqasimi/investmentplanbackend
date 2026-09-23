@@ -226,6 +226,7 @@ const getTransferSettings = asyncHandler(async (req, res) => {
       selfInvestmentEwalletMaxPercentage: settings.selfInvestmentEwalletMaxPercentage,
       withdrawalMinAmount: settings.withdrawalMinAmount || 0,
       withdrawalMaxAmount: settings.withdrawalMaxAmount || 0,
+      withdrawalFeePercentage: settings.withdrawalFeePercentage || 0,
     },
   });
 });
