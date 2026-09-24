@@ -78,9 +78,17 @@ const walletSchema = new mongoose.Schema(
       min: [0, 'Total earnings cannot be negative'],
     },
 
-    // Total amount invested by this user (sum of all investments).
-    // Used for ROI 2X cap and 3X earnings cap calculations.
+    // Total amount currently counted as ACTIVE investments.
+    // Used for ROI 2X cap only.
     totalInvestmentAmount: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // All-time sum of every investment (any status: ACTIVE/PAUSED/COMPLETED).
+    // Never decreases. Used as the 3X earnings cap base (× 3).
+    totalLifetimeInvestment: {
       type: Number,
       default: 0,
       min: 0,

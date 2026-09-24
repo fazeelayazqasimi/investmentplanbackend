@@ -186,7 +186,7 @@ const getUserDetail = asyncHandler(async (req, res) => {
     fundBalance: wallet ? wallet.fundBalance : 0,
     totalNetworkIncome: wallet ? wallet.totalNetworkIncome : 0,
     eligibleInvestmentBase: wallet ? wallet.eligibleInvestmentBase : 0,
-    network3xCap: wallet ? roundToTwoDecimals((wallet.totalInvestmentAmount || 0) * 3) : 0,
+    network3xCap: wallet ? roundToTwoDecimals((wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0) * 3) : 0,
     totalDeposited: sumMap['DEPOSIT:COMPLETED'] || 0,
     totalInvested: sumMap['INVESTMENT:COMPLETED'] || 0,
     totalRoi: sumMap['ROI:COMPLETED'] || 0,

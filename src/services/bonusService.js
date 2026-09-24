@@ -135,7 +135,7 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
 
   // Unified 3X earnings cap enforcement
   const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
-  const ownInvestment = wallet.totalInvestmentAmount || 0;
+  const ownInvestment = wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0;
   const cap3x = roundToTwoDecimals(ownInvestment * 3);
   const newTotalAfterCredit = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
 
@@ -266,7 +266,7 @@ const creditLevelIncome = async (level2UplineId, investmentAmount, session, inve
 
   // Unified 3X earnings cap enforcement — cap based on user's own investment
   const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
-  const ownInvestment = wallet.totalInvestmentAmount || 0;
+  const ownInvestment = wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0;
   const cap3x = roundToTwoDecimals(ownInvestment * 3);
   const newTotalAfterCredit = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
 
@@ -386,7 +386,7 @@ const creditLevelIncomeForLevel = async (level, uplineId, investmentAmount, sess
 
   // Unified 3X earnings cap enforcement
   const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
-  const ownInvestment = wallet.totalInvestmentAmount || 0;
+  const ownInvestment = wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0;
   const cap3x = roundToTwoDecimals(ownInvestment * 3);
   const newTotalAfterCredit = roundToTwoDecimals(currentEligibleEarnings + incomeAmount);
 
@@ -469,7 +469,7 @@ const creditLevelIncomeForLevel = async (level, uplineId, investmentAmount, sess
  * For each eligible user's investment, traverses their upline chain
  * and distributes the configured percentage at each level.
  *
- * 3X CAP ENFORCEMENT: Total eligible earnings cannot exceed 3x eligibleInvestmentBase.
+ * 3X CAP ENFORCEMENT: Total eligible earnings cannot exceed 3x totalLifetimeInvestment.
  * Overflow goes to pendingCommissions.
  *
  * @param {number} totalAmount - total amount to distribute (used as source)
@@ -572,7 +572,7 @@ const distributeProfitShare = async (totalAmount, adminId) => {
           wallet = created[0];
         }
 
-        const ownInvestment = wallet.totalInvestmentAmount || 0;
+        const ownInvestment = wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0;
         const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
         const cap3x = roundToTwoDecimals(ownInvestment * 3);
         const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));
@@ -633,7 +633,7 @@ const distributeProfitShare = async (totalAmount, adminId) => {
  * Traverses the investor's upline chain and distributes based on
  * configured profitShareLevels. Goes to profitShareBalance wallet.
  *
- * 3X CAP ENFORCEMENT: Total eligible earnings cannot exceed 3x totalInvestmentAmount.
+ * 3X CAP ENFORCEMENT: Total eligible earnings cannot exceed 3x totalLifetimeInvestment.
  * Overflow goes to pendingCommissions.
  *
  * @param {string} investorId - the user who earned ROI
@@ -691,7 +691,7 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
       wallet = created[0];
     }
 
-    const ownInvestment = wallet.totalInvestmentAmount || 0;
+    const ownInvestment = wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0;
     const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
     const cap3x = roundToTwoDecimals(ownInvestment * 3);
     const remaining3x = roundToTwoDecimals(Math.max(0, cap3x - currentEligibleEarnings));

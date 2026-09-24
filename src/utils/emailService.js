@@ -101,6 +101,11 @@ const transactionEmailLayout = ({ heading, intro, details = [], footer }) => `
           <span style="color:#1a1a2e;font-weight:bold;text-align:right;">${value}</span>
         </div>`).join('')}
       </div>` : ''}
+      <div style="background:#fff8e6;border:1px solid #f5d76e;border-radius:8px;padding:12px 16px;margin:0 0 16px;">
+        <p style="margin:0;font-size:14px;font-weight:bold;color:#8a6d00;text-align:center;">
+          Also check your Spam/Junk folder for this email.
+        </p>
+      </div>
       <p style="color:#999;font-size:12px;margin:0;">${footer}</p>
     </div>
   </div>

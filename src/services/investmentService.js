@@ -224,13 +224,17 @@ const createInvestment = async ({
         userWallet = created[0];
       }
 
-      // Count ALL ACTIVE investments (don't pause - old ones stay active)
-      const activeInvs = await Investment.find({
-        user: targetUserId, status: 'ACTIVE'
-      }).select('originalAmount').session(session).lean();
-      const totalActive = activeInvs.reduce((s, i) => s + (i.originalAmount || 0), 0);
+      // ACTIVE sum → 2X cap; lifetime sum (all statuses) → 3X cap
+      const allInvs = await Investment.find({
+        user: targetUserId
+      }).select('originalAmount status').session(session).lean();
+      const totalActive = allInvs
+        .filter((i) => i.status === 'ACTIVE')
+        .reduce((s, i) => s + (i.originalAmount || 0), 0);
+      const totalLifetime = allInvs.reduce((s, i) => s + (i.originalAmount || 0), 0);
 
       userWallet.totalInvestmentAmount = roundToTwoDecimals(totalActive);
+      userWallet.totalLifetimeInvestment = roundToTwoDecimals(totalLifetime);
       userWallet.totalMaxReturn = roundToTwoDecimals(totalActive * 2);
       // Reset 2X progress on reinvestment — fresh cycle starts
       userWallet.totalRoiEarned = 0;
@@ -547,13 +551,17 @@ const createDownlineInvestmentWithEwallet = async ({
         receiverWallet = created[0];
       }
 
-      // Count ALL ACTIVE investments (don't pause - old ones stay active)
-      const receiverActiveInvs = await Investment.find({
-        user: receiverId, status: 'ACTIVE'
-      }).select('originalAmount').session(session).lean();
-      const receiverTotalActive = receiverActiveInvs.reduce((s, i) => s + (i.originalAmount || 0), 0);
+      // ACTIVE sum → 2X cap; lifetime sum (all statuses) → 3X cap
+      const receiverAllInvs = await Investment.find({
+        user: receiverId
+      }).select('originalAmount status').session(session).lean();
+      const receiverTotalActive = receiverAllInvs
+        .filter((i) => i.status === 'ACTIVE')
+        .reduce((s, i) => s + (i.originalAmount || 0), 0);
+      const receiverTotalLifetime = receiverAllInvs.reduce((s, i) => s + (i.originalAmount || 0), 0);
 
       receiverWallet.totalInvestmentAmount = roundToTwoDecimals(receiverTotalActive);
+      receiverWallet.totalLifetimeInvestment = roundToTwoDecimals(receiverTotalLifetime);
       receiverWallet.totalMaxReturn = roundToTwoDecimals(receiverTotalActive * 2);
       // Reset 2X progress on reinvestment — fresh cycle starts
       receiverWallet.totalRoiEarned = 0;

@@ -132,19 +132,23 @@ const getPublicConfig = asyncHandler(async (req, res) => {
 const getProgressData = asyncHandler(async (req, res) => {
   const wallet = await Wallet.findOne({ user: req.user.id });
 
-  const totalInvestment = wallet ? (wallet.totalInvestmentAmount || 0) : 0;
+  // Active investments → 2X cap only
+  const activeInvestment = wallet ? (wallet.totalInvestmentAmount || 0) : 0;
+  // All-time investments (any status) → 3X cap (fallback until migration)
+  const totalInvestment = wallet
+    ? (wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0)
+    : 0;
   const totalRoiEarned = wallet ? (wallet.totalRoiEarned || 0) : 0;
   const totalEligibleEarnings = wallet ? (wallet.totalEligibleEarnings || 0) : 0;
   const cycle2xCompletions = wallet ? (wallet.cycle2xCompletions || 0) : 0;
-  const eligibleInvestmentBase = wallet ? (wallet.eligibleInvestmentBase || 0) : 0;
 
-  // 2X Milestone: ROI cap (total investment * 2) — GLOBAL
-  const milestone2x = totalInvestment * 2;
+  // 2X Milestone: ROI cap (active investment * 2) — GLOBAL
+  const milestone2x = activeInvestment * 2;
   const progress2x = totalRoiEarned;
   const remaining2x = Math.max(0, milestone2x - progress2x);
   const percentage2x = milestone2x > 0 ? Math.min(100, Math.round((progress2x / milestone2x) * 100)) : 0;
 
-  // 3X Milestone: Total earnings cap — based on user's own investment only
+  // 3X Milestone: Total earnings cap — total lifetime investment * 3
   const milestone3x = totalInvestment * 3;
   const progress3x = totalEligibleEarnings;
   const remaining3x = Math.max(0, milestone3x - progress3x);

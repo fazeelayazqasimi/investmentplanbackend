@@ -178,10 +178,10 @@ const processInvestmentRoi = async (investment, settings, forDate) => {
       // ==========================================
       // GLOBAL 3X CAP ENFORCEMENT
       // Total eligible earnings (ROI + Direct + Level + ProfitShare)
-      // cannot exceed totalInvestmentAmount * 3.
+      // cannot exceed totalLifetimeInvestment * 3.
       // ROI stops completely at 3X — no pending overflow.
       // ==========================================
-      const ownInvestment = wallet.totalInvestmentAmount || 0;
+      const ownInvestment = wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0;
       const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
       const cap3x = roundToTwoDecimals(ownInvestment * 3);
 
@@ -347,13 +347,14 @@ const processAllActiveInvestments = async (forDate = new Date()) => {
   const pendingMultiplier = settings.pendingReleaseMultiplier || 3;
 
   for (const wallet of wallets) {
-    const cap3x = roundToTwoDecimals((wallet.totalInvestmentAmount || 0) * 3);
+    const lifetimeInv = wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0;
+    const cap3x = roundToTwoDecimals(lifetimeInv * 3);
     const eligible = wallet.totalEligibleEarnings || 0;
     const remaining = roundToTwoDecimals(Math.max(0, cap3x - eligible));
     const pending = wallet.pendingCommissions || 0;
 
     if (pending > 0 && remaining > 0) {
-      const totalInv = wallet.totalInvestmentAmount || 0;
+      const totalInv = lifetimeInv;
       const maxFromPending = roundToTwoDecimals(totalInv * pendingMultiplier);
       const releaseAmount = roundToTwoDecimals(Math.min(pending, maxFromPending, remaining));
       if (releaseAmount > 0) {
@@ -554,8 +555,8 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
 
       appliedRoiAmount = roundToTwoDecimals(Math.max(0, appliedRoiAmount));
 
-      // 3X cap enforcement
-      const ownInvestment = wallet.totalInvestmentAmount || 0;
+      // 3X cap enforcement — base = total lifetime investment (all statuses)
+      const ownInvestment = wallet.totalLifetimeInvestment || wallet.totalInvestmentAmount || 0;
       const currentEligibleEarnings = wallet.totalEligibleEarnings || 0;
       const cap3x = roundToTwoDecimals(ownInvestment * 3);
 

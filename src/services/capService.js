@@ -12,7 +12,9 @@ const roundToTwoDecimals = (value) => {
  * Evaluates a wallet against the global 2X ROI cap and 3X earnings cap.
  *
  * - 2X full: totalRoiEarned (or totalReturned) >= totalInvestmentAmount * 2
- * - 3X full: totalEligibleEarnings >= totalInvestmentAmount * 3
+ * - 3X full: totalEligibleEarnings >= totalLifetimeInvestment * 3
+ *   (totalLifetimeInvestment = sum of ALL investments, any status;
+ *    falls back to totalInvestmentAmount until migration runs)
  *
  * @param {Object|null} wallet
  * @returns {'2X'|'3X'|null} which cap is full, or null if neither (or no investment base)
@@ -20,11 +22,12 @@ const roundToTwoDecimals = (value) => {
 const getCapStatus = (wallet) => {
   if (!wallet) return null;
 
-  const totalInv = wallet.totalInvestmentAmount || 0;
-  if (totalInv <= 0) return null;
+  const activeInv = wallet.totalInvestmentAmount || 0;
+  const lifetimeInv = wallet.totalLifetimeInvestment || activeInv || 0;
+  if (activeInv <= 0 && lifetimeInv <= 0) return null;
 
-  const cap2x = roundToTwoDecimals(totalInv * 2);
-  const cap3x = roundToTwoDecimals(totalInv * 3);
+  const cap2x = activeInv > 0 ? roundToTwoDecimals(activeInv * 2) : 0;
+  const cap3x = lifetimeInv > 0 ? roundToTwoDecimals(lifetimeInv * 3) : 0;
   const roiEarned = wallet.totalRoiEarned || 0;
   const returned = wallet.totalReturned || 0;
   const eligible = wallet.totalEligibleEarnings || 0;

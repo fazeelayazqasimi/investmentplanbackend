@@ -26,14 +26,15 @@ mongoose.connect(process.env.MONGO_URI).then(async () => {
   let skipped = 0;
 
   for (const wallet of wallets) {
-    const totalInv = wallet.totalInvestmentAmount || 0;
-    if (totalInv <= 0) {
+    const activeInv = wallet.totalInvestmentAmount || 0;
+    const lifetimeInv = wallet.totalLifetimeInvestment || activeInv || 0;
+    if (activeInv <= 0 && lifetimeInv <= 0) {
       skipped++;
       continue;
     }
 
-    const cap2x = roundToTwoDecimals(totalInv * 2);
-    const cap3x = roundToTwoDecimals(totalInv * 3);
+    const cap2x = activeInv > 0 ? roundToTwoDecimals(activeInv * 2) : 0;
+    const cap3x = lifetimeInv > 0 ? roundToTwoDecimals(lifetimeInv * 3) : 0;
     const roiEarned = wallet.totalRoiEarned || 0;
     const returned = wallet.totalReturned || 0;
     const eligible = wallet.totalEligibleEarnings || 0;
@@ -58,7 +59,7 @@ mongoose.connect(process.env.MONGO_URI).then(async () => {
 
     const whichCap = full2x && full3x ? '2X+3X' : full2x ? '2X' : '3X';
     console.log(
-      `User ${wallet.user}: ${whichCap} cap full (inv: $${totalInv}, roi: $${roiEarned}, eligible: $${eligible}) — pausing ${activeInvs.length} active investment(s)`
+      `User ${wallet.user}: ${whichCap} cap full (inv: $${activeInv}, lifetime: $${lifetimeInv}, roi: $${roiEarned}, eligible: $${eligible}) — pausing ${activeInvs.length} active investment(s)`
     );
 
     if (!DRY_RUN) {
