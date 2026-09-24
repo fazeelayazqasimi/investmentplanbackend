@@ -1006,7 +1006,7 @@ const approveWithdrawal = async (transactionId, adminId) => {
     });
 
     await notifyUserByEmail(result.user, (email) =>
-      sendWithdrawalApprovedEmail(email, result.amount, result.metadata?.netAmount ?? null)
+      sendWithdrawalApprovedEmail(email, result.amount, result.metadata?.netAmount ?? null, result.metadata?.fee ?? null)
     );
 
     return result;
