@@ -4,6 +4,7 @@ const Transaction = require('../models/Transaction');
 const SystemSettings = require('../models/SystemSettings');
 const walletService = require('./walletService');
 const { getCapStatus, pauseAllActive } = require('./capService');
+const { sendDirectIncomeEmail } = require('../utils/emailService');
 
 /**
  * Rounds a number to 2 decimal places safely for currency values.
@@ -205,6 +206,13 @@ const creditDirectIncome = async (directUplineId, investmentAmount, session, inv
   // Network income may have filled the 3X cap → pause all active investments
   if (getCapStatus(wallet)) {
     await pauseAllActive(directUplineId, session);
+  }
+
+  // Notify upline about direct income (fire-and-forget — never blocks the session)
+  if (mainCredited > 0 && upline.email) {
+    sendDirectIncomeEmail(upline.email, mainCredited).catch((err) =>
+      console.error('Direct income email failed:', err.message)
+    );
   }
 
   return { mainCredited, pendingCredited, mainTransaction, pendingTransaction };

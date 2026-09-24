@@ -2,6 +2,28 @@ const mongoose = require('mongoose');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const SystemSettings = require('../models/SystemSettings');
+const User = require('../models/User');
+const {
+  sendDepositApprovedEmail,
+  sendDepositRejectedEmail,
+  sendWithdrawalApprovedEmail,
+  sendWithdrawalRejectedEmail,
+} = require('../utils/emailService');
+
+/**
+ * Fire-safe user email: looks up the user's email and sends.
+ * Never throws — email failure must not break the main action.
+ */
+const notifyUserByEmail = async (userId, sendFn) => {
+  try {
+    const user = await User.findById(userId).select('email');
+    if (user && user.email) {
+      await sendFn(user.email);
+    }
+  } catch (err) {
+    console.error('Email notification failed:', err.message);
+  }
+};
 
 /**
  * Rounds a number to 2 decimal places safely for currency values.
@@ -255,6 +277,10 @@ const approveDeposit = async (transactionId, adminId) => {
       result = tx;
     });
 
+    await notifyUserByEmail(result.user, (email) =>
+      sendDepositApprovedEmail(email, result.amount)
+    );
+
     return result;
   } finally {
     session.endSession();
@@ -291,6 +317,10 @@ const rejectDeposit = async (transactionId, adminId) => {
   tx.createdBy = adminId;
   tx.description = tx.description ? `${tx.description} (rejected)` : 'Deposit rejected';
   await tx.save();
+
+  await notifyUserByEmail(tx.user, (email) =>
+    sendDepositRejectedEmail(email, tx.amount)
+  );
 
   return tx;
 };
@@ -975,6 +1005,10 @@ const approveWithdrawal = async (transactionId, adminId) => {
       result = tx;
     });
 
+    await notifyUserByEmail(result.user, (email) =>
+      sendWithdrawalApprovedEmail(email, result.amount, result.metadata?.netAmount ?? null)
+    );
+
     return result;
   } finally {
     session.endSession();
@@ -1037,6 +1071,10 @@ const rejectWithdrawal = async (transactionId, adminId, reason = '') => {
 
       result = tx;
     });
+
+    await notifyUserByEmail(result.user, (email) =>
+      sendWithdrawalRejectedEmail(email, result.amount, reason)
+    );
 
     return result;
   } finally {

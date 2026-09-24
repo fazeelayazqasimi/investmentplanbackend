@@ -36,9 +36,18 @@ app.use(
       // Allow requests with no origin (e.g. mobile apps, curl, Postman)
       if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
+        return;
       }
+      // Development: allow any localhost/127.0.0.1 port (Vite may pick 5174+)
+      if (
+        process.env.NODE_ENV !== 'production' &&
+        /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/.test(origin)
+      ) {
+        callback(null, true);
+        return;
+      }
+      console.error(`Blocked by CORS: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
     },
     credentials: true,
   })
