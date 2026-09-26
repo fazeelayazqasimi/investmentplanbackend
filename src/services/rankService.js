@@ -43,6 +43,13 @@ const getUserRankData = async (userId) => {
   let totalTeamBusiness = 0;
   const legs = directIds.length;
 
+  // Maps every downline member (direct + indirect) to the direct referral
+  // that roots its leg. Each direct referral = one separate leg.
+  const legOfUser = new Map();
+  directIds.forEach((id) => legOfUser.set(id.toString(), id.toString()));
+
+  let legBusiness = [];
+
   if (directIds.length > 0) {
     const directInvestments = await Investment.aggregate([
       { $match: { user: { $in: directIds } } },
@@ -56,9 +63,17 @@ const getUserRankData = async (userId) => {
     const MAX_DEPTH = 50;
 
     while (currentParentIds.length > 0 && level <= MAX_DEPTH) {
-      const children = await User.find({ referredBy: { $in: currentParentIds } }).select('_id').lean();
+      const children = await User.find({ referredBy: { $in: currentParentIds } })
+        .select('_id referredBy')
+        .lean();
       if (children.length === 0) break;
-      children.forEach((c) => allDownlineIds.push(c._id));
+      children.forEach((c) => {
+        allDownlineIds.push(c._id);
+        legOfUser.set(
+          c._id.toString(),
+          legOfUser.get(c.referredBy?.toString()) || c._id.toString()
+        );
+      });
       currentParentIds = children.map((c) => c._id);
       level += 1;
     }
@@ -70,6 +85,36 @@ const getUserRankData = async (userId) => {
       ]);
       totalTeamBusiness = teamInvestments[0]?.total || 0;
     }
+
+    // Per-leg business: each leg = one direct referral + its entire subtree.
+    const legBusinessByRoot = new Map();
+    directIds.forEach((id) => legBusinessByRoot.set(id.toString(), 0));
+
+    const legMemberIds = allDownlineIds.filter(
+      (id) => id.toString() !== userId.toString()
+    );
+
+    if (legMemberIds.length > 0) {
+      const legInvestments = await Investment.aggregate([
+        { $match: { user: { $in: legMemberIds } } },
+        { $group: { _id: '$user', total: { $sum: '$originalAmount' } } },
+      ]);
+
+      legInvestments.forEach((row) => {
+        if (!row || row._id === null || row._id === undefined) return;
+        const legRoot = legOfUser.get(row._id.toString());
+        if (legRoot !== undefined) {
+          legBusinessByRoot.set(
+            legRoot,
+            (legBusinessByRoot.get(legRoot) || 0) + (row.total || 0)
+          );
+        }
+      });
+    }
+
+    legBusiness = directIds.map(
+      (id) => legBusinessByRoot.get(id.toString()) || 0
+    );
   }
 
   return {
@@ -77,16 +122,28 @@ const getUserRankData = async (userId) => {
     directBusiness: roundToTwoDecimals(directBusiness),
     totalTeamBusiness: roundToTwoDecimals(totalTeamBusiness),
     legs,
+    legBusiness: legBusiness.map(roundToTwoDecimals),
   };
 };
 
 const checkRankCriteria = (userData, rank) => {
   const { criteria } = rank;
+
+  const legsRequired = criteria.legs || 0;
+  const minBusinessPerLeg = criteria.minBusinessPerLeg || 0;
+
+  // Backward compatible: when no per-leg minimum is configured,
+  // legs simply counts the number of direct referrals.
+  const qualifiedLegs =
+    minBusinessPerLeg > 0
+      ? (userData.legBusiness || []).filter((b) => b >= minBusinessPerLeg).length
+      : userData.legs;
+
   return (
     userData.selfDeposit >= criteria.selfDeposit &&
     userData.directBusiness >= criteria.directBusiness &&
     userData.totalTeamBusiness >= criteria.totalTeamBusiness &&
-    userData.legs >= criteria.legs
+    qualifiedLegs >= legsRequired
   );
 };
 

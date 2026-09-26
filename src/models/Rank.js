@@ -47,6 +47,11 @@ const rankSchema = new mongoose.Schema(
         default: 0,
         min: [0, 'Legs criteria cannot be negative'],
       },
+      minBusinessPerLeg: {
+        type: Number,
+        default: 0,
+        min: [0, 'Minimum business per leg cannot be negative'],
+      },
     },
 
     promotionType: {
