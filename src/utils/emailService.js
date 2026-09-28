@@ -86,14 +86,27 @@ ${brandHeader('Password Reset')}
 ${brandFooter('If this wasn\'t you, your password stays unchanged.')}
 `);
 
-const sendOtpEmail = async (email, code, purpose) => {
-  const subject = purpose === 'EMAIL_VERIFICATION'
-    ? 'Verify Your Email - FinRise Global'
-    : 'Reset Your Password - FinRise Global';
+const withdrawalOtpTemplate = (code) => shell(`
+${brandHeader('Withdrawal Verification')}
+        <tr><td style="padding:32px 28px;text-align:center;">
+          <p style="color:${BODY_TEXT};font-size:14px;line-height:1.6;margin:0 0 22px;">Use the code below to confirm your withdrawal request. This code expires in <strong style="color:${HEADING};">2 minutes</strong>.</p>
+          <div style="background:${SOFT_GREEN};border:2px dashed #34d399;border-radius:12px;padding:22px 16px;margin:0 0 20px;">
+            <span style="font-size:38px;font-weight:bold;letter-spacing:10px;color:${ACCENT};">${code}</span>
+          </div>
+          <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin:0 0 4px;">
+            <p style="margin:0;font-size:12px;color:#92400e;">If you did not request this withdrawal, please ignore this email and change your password.</p>
+          </div>
+        </td></tr>
+${brandFooter('Stay secure — never share your OTP with anyone.')}
+`);
 
-  const html = purpose === 'EMAIL_VERIFICATION'
-    ? verificationTemplate(code)
-    : passwordResetTemplate(code);
+const sendOtpEmail = async (email, code, purpose) => {
+  const templates = {
+    EMAIL_VERIFICATION: { subject: 'Verify Your Email - FinRise Global', html: verificationTemplate(code) },
+    PASSWORD_RESET: { subject: 'Reset Your Password - FinRise Global', html: passwordResetTemplate(code) },
+    WITHDRAWAL: { subject: 'Confirm Your Withdrawal - FinRise Global', html: withdrawalOtpTemplate(code) },
+  };
+  const { subject, html } = templates[purpose] || templates.PASSWORD_RESET;
 
   await transporter.sendMail({
     from: FROM,

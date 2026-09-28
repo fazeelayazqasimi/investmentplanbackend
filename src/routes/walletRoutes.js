@@ -13,6 +13,8 @@ const {
   transferProfitShare,
   transferFund,
   getTransferSettings,
+  sendWithdrawalOtp,
+  verifyWithdrawalOtp,
   requestWithdrawal,
   getMyWithdrawals,
   getPendingCommissionDetails,
@@ -51,7 +53,13 @@ router.post('/transfer/profit-share', authenticate, transferProfitShare);
 // @route   POST /api/wallet/transfer/fund
 router.post('/transfer/fund', authenticate, transferFund);
 
-// @route   POST /api/wallet/withdraw
+// @route   POST /api/wallet/withdraw/otp  (send OTP to email)
+router.post('/withdraw/otp', authenticate, sendWithdrawalOtp);
+
+// @route   POST /api/wallet/withdraw/verify-otp  (verify OTP -> token)
+router.post('/withdraw/verify-otp', authenticate, verifyWithdrawalOtp);
+
+// @route   POST /api/wallet/withdraw  (requires verified withdrawToken)
 router.post('/withdraw', authenticate, requestWithdrawal);
 
 // @route   GET /api/wallet/withdrawals

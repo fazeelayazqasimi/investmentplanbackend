@@ -16,7 +16,7 @@ const verificationCodeSchema = new mongoose.Schema(
     },
     purpose: {
       type: String,
-      enum: ['EMAIL_VERIFICATION', 'PASSWORD_RESET'],
+      enum: ['EMAIL_VERIFICATION', 'PASSWORD_RESET', 'WITHDRAWAL'],
       required: [true, 'Purpose is required'],
     },
     used: {

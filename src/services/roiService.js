@@ -438,12 +438,13 @@ const getUserRoiHistory = async (userId, { page = 1, limit = 20 } = {}) => {
 
 /**
  * Processes ROI manually for ALL active investments using a single
- * admin-supplied percentage. This is a one-time action for today.
+ * admin-supplied percentage. Can be run any number of times — each run
+ * credits all eligible active investments again (until 2X/3X caps).
  *
  * - Uses the supplied percentage directly (ignores schedule)
  * - Respects the 2X per-investment cap
  * - Respects the global 3X earnings cap
- * - Prevents duplicate same-day processing
+ * - No duplicate same-day block for manual runs
  * - Does NOT modify AUTO schedule configuration
  *
  * @param {number} percentage - the ROI percentage to apply
@@ -463,7 +464,10 @@ const processManualRoi = async (percentage, forDate = new Date()) => {
     return { processed: 0, skipped: 0, failed: 0, totalCredited: 0, errors: [], message: 'ROI processing is disabled' };
   }
 
-  const roiDate = normalizeToMidnightUTC(forDate);
+  // Use the actual run timestamp as roiDate (NOT midnight-normalized) so
+  // every manual run gets a fresh unique { investment, roiDate } key and
+  // the existing unique index never blocks a repeat run the same day.
+  const roiDate = forDate instanceof Date ? forDate : new Date(forDate);
   const activeInvestments = await Investment.find({ status: 'ACTIVE' });
 
   let processed = 0;
@@ -497,7 +501,7 @@ const processManualRoi = async (percentage, forDate = new Date()) => {
  *
  * @param {Object} investment - Investment document (must be ACTIVE)
  * @param {number} percentage - the admin-supplied ROI percentage
- * @param {Date} roiDate - the normalized ROI date
+ * @param {Date} roiDate - the run timestamp used as the ROI date
  * @returns {Promise<Object|null>} result with appliedRoiAmount, or null if skipped
  */
 const processManualInvestmentRoi = async (investment, percentage, roiDate) => {

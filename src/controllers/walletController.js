@@ -1,9 +1,12 @@
 const asyncHandler = require('express-async-handler');
+const jwt = require('jsonwebtoken');
 const walletService = require('../services/walletService');
 const Transaction = require('../models/Transaction');
 const SystemSettings = require('../models/SystemSettings');
 const User = require('../models/User');
 const Investment = require('../models/Investment');
+const VerificationCode = require('../models/VerificationCode');
+const { sendOtpEmail } = require('../utils/emailService');
 
 // ==========================================
 // @desc    Get logged-in user's wallet balances
@@ -233,12 +236,107 @@ const getTransferSettings = asyncHandler(async (req, res) => {
 });
 
 // ==========================================
+// @desc    Send withdrawal verification OTP to the user's email
+// @route   POST /api/wallet/withdraw/otp
+// @access  Private (User)
+// ==========================================
+const sendWithdrawalOtp = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id).select('email');
+  if (!user || !user.email) {
+    return res.status(400).json({ success: false, message: 'No email address on file for this account' });
+  }
+  const email = user.email.toLowerCase();
+
+  // Rate limit: max 1 OTP per 60 seconds
+  const recentCode = await VerificationCode.findOne({
+    email,
+    purpose: 'WITHDRAWAL',
+    createdAt: { $gt: new Date(Date.now() - 60 * 1000) },
+  });
+  if (recentCode) {
+    return res.status(429).json({ success: false, message: 'Please wait 60 seconds before requesting a new code' });
+  }
+
+  // Invalidate any previous unused withdrawal codes
+  await VerificationCode.deleteMany({ email, purpose: 'WITHDRAWAL', used: false });
+
+  const code = Math.floor(1000 + Math.random() * 9000).toString();
+  const expiresAt = new Date(Date.now() + 2 * 60 * 1000); // 2 minutes
+  await VerificationCode.create({ email, code, purpose: 'WITHDRAWAL', expiresAt });
+  await sendOtpEmail(email, code, 'WITHDRAWAL');
+
+  const [local, domain] = email.split('@');
+  const maskedEmail = `${local.slice(0, 2)}***@${domain}`;
+
+  res.status(200).json({
+    success: true,
+    message: `Verification code sent to ${maskedEmail}`,
+    data: { maskedEmail },
+  });
+});
+
+// ==========================================
+// @desc    Verify withdrawal OTP and issue a short-lived withdraw token
+// @route   POST /api/wallet/withdraw/verify-otp
+// @access  Private (User)
+// ==========================================
+const verifyWithdrawalOtp = asyncHandler(async (req, res) => {
+  const { code } = req.body;
+
+  if (!code) {
+    return res.status(400).json({ success: false, message: 'Verification code is required' });
+  }
+
+  const user = await User.findById(req.user.id).select('email');
+  if (!user || !user.email) {
+    return res.status(400).json({ success: false, message: 'No email address on file for this account' });
+  }
+  const email = user.email.toLowerCase();
+
+  const verification = await VerificationCode.findOne({
+    email,
+    purpose: 'WITHDRAWAL',
+    used: false,
+  }).sort({ createdAt: -1 });
+
+  if (!verification) {
+    return res.status(400).json({ success: false, message: 'No verification code found. Please request a new one.' });
+  }
+
+  if (verification.expiresAt < new Date()) {
+    return res.status(400).json({ success: false, message: 'Verification code has expired. Please request a new one.' });
+  }
+
+  if (verification.code !== code.toString().trim()) {
+    return res.status(400).json({ success: false, message: 'Invalid verification code' });
+  }
+
+  // Mark code as used (single-use)
+  verification.used = true;
+  await verification.save();
+
+  // Short-lived signed token proving OTP verification — required by
+  // requestWithdrawal before any balance is touched.
+  const withdrawToken = jwt.sign(
+    { userId: req.user.id, purpose: 'WITHDRAWAL' },
+    process.env.JWT_SECRET,
+    { expiresIn: '10m' }
+  );
+
+  res.status(200).json({
+    success: true,
+    message: 'OTP verified successfully',
+    data: { withdrawToken },
+  });
+});
+
+// ==========================================
 // @desc    User requests a withdrawal (pending admin approval)
 // @route   POST /api/wallet/withdraw
 // @access  Private (User)
 // ==========================================
 const requestWithdrawal = asyncHandler(async (req, res) => {
-  const { amount, balanceField = 'mainBalance', payoutMethod, payoutDetails, notes } = req.body;
+  const { amount, balanceField = 'mainBalance', payoutMethod, payoutDetails, notes, withdrawToken } = req.body;
 
   if (!amount || amount <= 0) {
     return res.status(400).json({ success: false, message: 'Invalid amount' });
@@ -250,6 +348,20 @@ const requestWithdrawal = asyncHandler(async (req, res) => {
 
   if (!payoutDetails) {
     return res.status(400).json({ success: false, message: 'Payout details are required' });
+  }
+
+  // OTP verification gate — must be verified BEFORE any balance deduction
+  if (!withdrawToken) {
+    return res.status(400).json({ success: false, message: 'Email OTP verification is required to request a withdrawal' });
+  }
+
+  try {
+    const payload = jwt.verify(withdrawToken, process.env.JWT_SECRET);
+    if (payload.purpose !== 'WITHDRAWAL' || payload.userId !== req.user.id) {
+      throw new Error('token mismatch');
+    }
+  } catch (err) {
+    return res.status(401).json({ success: false, message: 'OTP verification is invalid or expired. Please verify again.' });
   }
 
   const transaction = await walletService.requestWithdrawal(req.user.id, {
@@ -373,6 +485,8 @@ module.exports = {
   transferProfitShare,
   transferFund,
   getTransferSettings,
+  sendWithdrawalOtp,
+  verifyWithdrawalOtp,
   requestWithdrawal,
   getMyWithdrawals,
   getPendingCommissionDetails,
