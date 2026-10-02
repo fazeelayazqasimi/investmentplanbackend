@@ -19,8 +19,8 @@ const bcrypt = require('bcrypt');
 // ==========================================
 const listUsers = asyncHandler(async (req, res) => {
   const { search, role, status, page = 1, limit = 50 } = req.query;
-  const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
-  const lim = Math.min(200, Number(limit));
+  const lim = Math.min(200, Math.max(1, Number(limit) || 50));
+  const skip = (Math.max(1, Number(page) || 1) - 1) * lim;
 
   const match = {};
   if (role) match.role = role;
@@ -684,7 +684,7 @@ const processRoi = asyncHandler(async (req, res) => {
 // @access  Private (Admin)
 // ==========================================
 const processRoiManual = asyncHandler(async (req, res) => {
-  const { percentage } = req.body || {};
+  const { percentage, runId } = req.body || {};
 
   if (percentage === undefined || percentage === null || percentage === '') {
     res.status(400);
@@ -697,8 +697,21 @@ const processRoiManual = asyncHandler(async (req, res) => {
     throw new Error('ROI percentage must be a number greater than zero');
   }
 
+  // runId (client-generated ISO timestamp) is the roiDate for the whole run.
+  // A retry with the same runId is idempotent — the unique
+  // { investment, roiDate } index skips users already credited.
+  let runIdentifier = null;
+  if (runId) {
+    const parsed = new Date(runId);
+    if (isNaN(parsed.getTime())) {
+      res.status(400);
+      throw new Error('runId must be a valid ISO timestamp');
+    }
+    runIdentifier = parsed.toISOString();
+  }
+
   const forDate = new Date();
-  const result = await roiService.processManualRoi(numPercentage, forDate);
+  const result = await roiService.processManualRoi(numPercentage, forDate, runIdentifier);
   res.status(200).json({
     success: true,
     message: 'Manual ROI processing completed',

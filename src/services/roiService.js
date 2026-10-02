@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Investment = require('../models/Investment');
+const User = require('../models/User');
 const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const ROIHistory = require('../models/ROIHistory');
@@ -446,12 +447,23 @@ const getUserRoiHistory = async (userId, { page = 1, limit = 20 } = {}) => {
  * - Respects the global 3X earnings cap
  * - No duplicate same-day block for manual runs
  * - Does NOT modify AUTO schedule configuration
+ * - NEVER skips an active investment: cap-limited users get a partial
+ *   credit of whatever remains of their limit (reported as CAPPED), and
+ *   future-dated investments are credited immediately
+ * - Returns a full per-user report (who was credited, who was held
+ *   and why) so the admin UI can show exactly what happened
  *
  * @param {number} percentage - the ROI percentage to apply
  * @param {Date} [forDate=new Date()]
- * @returns {Promise<{ processed: number, skipped: number, failed: number, totalCredited: number, errors: Array }>}
+ * @param {string|null} [runId=null] - client-generated run identifier (ISO
+ *   timestamp). When provided it is used as the roiDate for the WHOLE run,
+ *   so a retried request re-uses the same { investment, roiDate } key and
+ *   the unique index prevents double-crediting users that were already
+ *   paid before an interrupted run.
+ * @returns {Promise<Object>} run report with totalActive/processed/capped/
+ *   skipped/failed/totalCredited/results[]/errors[]
  */
-const processManualRoi = async (percentage, forDate = new Date()) => {
+const processManualRoi = async (percentage, forDate = new Date(), runId = null) => {
   if (!percentage || percentage <= 0) {
     const error = new Error('ROI percentage must be greater than zero');
     error.statusCode = 400;
@@ -461,37 +473,131 @@ const processManualRoi = async (percentage, forDate = new Date()) => {
   const settings = await SystemSettings.getSettings();
 
   if (!settings.roiProcessingEnabled) {
-    return { processed: 0, skipped: 0, failed: 0, totalCredited: 0, errors: [], message: 'ROI processing is disabled' };
+    return {
+      totalActive: 0,
+      processed: 0,
+      capped: 0,
+      skipped: 0,
+      failed: 0,
+      totalCredited: 0,
+      results: [],
+      errors: [],
+      message: 'ROI processing is disabled',
+    };
   }
 
-  // Use the actual run timestamp as roiDate (NOT midnight-normalized) so
-  // every manual run gets a fresh unique { investment, roiDate } key and
-  // the existing unique index never blocks a repeat run the same day.
-  const roiDate = forDate instanceof Date ? forDate : new Date(forDate);
+  // Single roiDate for the entire run (NOT midnight-normalized) so repeat
+  // manual runs on the same day get a fresh unique { investment, roiDate }
+  // key. When runId is supplied (client retry), the SAME timestamp is reused
+  // so the unique index makes the retry idempotent instead of double-paying.
+  let roiDate = forDate instanceof Date ? forDate : new Date(forDate);
+  if (runId) {
+    const parsed = new Date(runId);
+    if (!isNaN(parsed.getTime())) roiDate = parsed;
+  }
+
   const activeInvestments = await Investment.find({ status: 'ACTIVE' });
 
+  // Resolve display info (name/email) in a separate query so investment.user
+  // stays a plain ObjectId (and is never nulled out for deleted users).
+  const userIds = [...new Set(activeInvestments.map((i) => String(i.user)))];
+  const users = userIds.length
+    ? await User.find({ _id: { $in: userIds } }, 'name email').lean()
+    : [];
+  const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+
+  // Group investments per user so one user's investments never run
+  // concurrently (they share a single wallet document in their transactions).
+  const groupsByUser = new Map();
+  for (const investment of activeInvestments) {
+    const key = String(investment.user);
+    if (!groupsByUser.has(key)) groupsByUser.set(key, []);
+    groupsByUser.get(key).push(investment);
+  }
+
   let processed = 0;
+  let capped = 0;
   let skipped = 0;
   let failed = 0;
   let totalCredited = 0;
   const errors = [];
+  const results = [];
 
-  for (const investment of activeInvestments) {
+  const CONCURRENCY = 5;
+
+  const processInvestment = async (investment) => {
+    const userId = String(investment.user);
+    const userDoc = userMap.get(userId) || null;
+    const entry = {
+      userId,
+      name: (userDoc && userDoc.name) || '',
+      email: (userDoc && userDoc.email) || '',
+      investmentId: investment._id.toString(),
+      amount: investment.originalAmount,
+      credited: 0,
+      status: 'SKIPPED',
+      reason: '',
+    };
+
     try {
-      const result = await processManualInvestmentRoi(investment, percentage, roiDate);
-      if (result) {
-        processed += 1;
-        totalCredited = roundToTwoDecimals(totalCredited + result.appliedRoiAmount);
+      const outcome = await processManualInvestmentRoi(investment, percentage, roiDate, settings);
+      entry.credited = roundToTwoDecimals(outcome.appliedRoiAmount || 0);
+      entry.status = outcome.status;
+      entry.reason = outcome.reason || '';
+
+      if (outcome.status === 'CREDITED' || outcome.status === 'CAPPED') {
+        // Paid = actually credited (>0). CAPPED covers partial credits AND
+        // cap-full-with-nothing-left — both are holds, never "skipped".
+        if (entry.credited > 0) {
+          processed += 1;
+          totalCredited = roundToTwoDecimals(totalCredited + entry.credited);
+        }
+        if (outcome.status === 'CAPPED') capped += 1;
       } else {
         skipped += 1;
       }
     } catch (error) {
       failed += 1;
-      errors.push({ investmentId: investment._id.toString(), message: error.message });
+      entry.status = 'FAILED';
+      entry.reason = error.message;
+      errors.push({ investmentId: entry.investmentId, userId, message: error.message });
     }
-  }
 
-  return { processed, skipped, failed, totalCredited, errors };
+    results.push(entry);
+  };
+
+  // Worker pool: a few users at a time, investments of each user sequential.
+  const userGroups = [...groupsByUser.values()];
+  let cursor = 0;
+  const workerCount = Math.max(1, Math.min(CONCURRENCY, userGroups.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (cursor < userGroups.length) {
+      const group = userGroups[cursor];
+      cursor += 1;
+      for (const investment of group) {
+        await processInvestment(investment);
+      }
+    }
+  });
+  await Promise.all(workers);
+
+  const statusOrder = { CREDITED: 0, CAPPED: 1, SKIPPED: 2, FAILED: 3 };
+  results.sort((a, b) => {
+    const byStatus = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+    if (byStatus !== 0) return byStatus;
+    return String(a.name).localeCompare(String(b.name));
+  });
+
+  return {
+    totalActive: activeInvestments.length,
+    processed,
+    capped,
+    skipped,
+    failed,
+    totalCredited,
+    results,
+    errors,
+  };
 };
 
 /**
@@ -502,35 +608,42 @@ const processManualRoi = async (percentage, forDate = new Date()) => {
  * @param {Object} investment - Investment document (must be ACTIVE)
  * @param {number} percentage - the admin-supplied ROI percentage
  * @param {Date} roiDate - the run timestamp used as the ROI date
- * @returns {Promise<Object|null>} result with appliedRoiAmount, or null if skipped
+ * @param {Object} settings - SystemSettings document
+ * @returns {Promise<{ status: 'CREDITED'|'CAPPED'|'SKIPPED', reason: string, appliedRoiAmount: number }>}
  */
-const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
+const processManualInvestmentRoi = async (investment, percentage, roiDate, settings) => {
   if (investment.status !== 'ACTIVE') {
-    return null;
+    return { status: 'SKIPPED', reason: 'Investment is not ACTIVE', appliedRoiAmount: 0 };
   }
 
-  // Global 2X/3X cap full → pause ALL active investments immediately
-  const preCapCheck = await pauseIfCapFull(investment.user);
-  if (preCapCheck.paused) {
-    return null;
-  }
+  // NOTE: no pre-cap skip and no future-start skip here — manual ROI must
+  // never skip an active investment. Cap-full users get a partial credit of
+  // whatever remains (possibly 0 → reported as CAPPED, never SKIPPED), and
+  // future-dated investments are credited immediately on admin request.
 
-  const startMid = investment.startDate ? normalizeToMidnightUTC(investment.startDate) : null;
-  if (startMid && roiDate < startMid) return null;
-
-  const rawRoiAmount = roundToTwoDecimals((investment.originalAmount * percentage) / 100);
-  if (rawRoiAmount <= 0) {
-    return null;
+  // Never round down to zero — guarantee at least the minimum unit so no
+  // active investment can be skipped for amount reasons.
+  let rawRoiAmount = roundToTwoDecimals((investment.originalAmount * percentage) / 100);
+  if (!(rawRoiAmount > 0)) {
+    rawRoiAmount = 0.01;
   }
 
   const session = await mongoose.startSession();
 
   try {
     let result = null;
+    let heldReason = null;
 
     await session.withTransaction(async () => {
       const freshInvestment = await Investment.findById(investment._id).session(session);
-      if (!freshInvestment || freshInvestment.status !== 'ACTIVE') {
+      if (!freshInvestment) {
+        heldReason = 'Investment was removed during this run';
+        return;
+      }
+      if (freshInvestment.status !== 'ACTIVE') {
+        // Paused mid-run by the 2X/3X cap (pauseAllActive) — reported as
+        // CAPPED, never SKIPPED.
+        heldReason = 'Paused during this run — 2X/3X cap reached';
         return;
       }
 
@@ -540,21 +653,26 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
         wallet = created[0];
       }
 
-      // Global 2X cap enforcement
-      const totalMaxReturn = roundToTwoDecimals((wallet.totalInvestmentAmount || 0) * 2);
-      const totalReturned = wallet.totalRoiEarned || 0;
-      const previousTotalReturned = totalReturned;
+      // Global 2X cap enforcement.
+      // When the wallet's investment base is 0/missing (stale data), the cap
+      // cannot be evaluated — pay the full amount instead of blocking the
+      // payment (mirrors the 3X logic below, which only applies for base > 0).
+      const investedBase2x = wallet.totalInvestmentAmount || 0;
+      const totalMaxReturn = roundToTwoDecimals(investedBase2x * 2);
+      const previousTotalReturned = wallet.totalRoiEarned || 0;
       const remainingBeforeThisRoi = roundToTwoDecimals(totalMaxReturn - previousTotalReturned);
 
       let appliedRoiAmount = rawRoiAmount;
       let status = 'SUCCESS';
 
-      if (rawRoiAmount > remainingBeforeThisRoi && remainingBeforeThisRoi > 0) {
-        appliedRoiAmount = remainingBeforeThisRoi;
-        status = 'CAPPED';
-      } else if (remainingBeforeThisRoi <= 0) {
-        appliedRoiAmount = 0;
-        status = 'CAPPED';
+      if (investedBase2x > 0) {
+        if (rawRoiAmount > remainingBeforeThisRoi && remainingBeforeThisRoi > 0) {
+          appliedRoiAmount = remainingBeforeThisRoi;
+          status = 'CAPPED';
+        } else if (remainingBeforeThisRoi <= 0) {
+          appliedRoiAmount = 0;
+          status = 'CAPPED';
+        }
       }
 
       appliedRoiAmount = roundToTwoDecimals(Math.max(0, appliedRoiAmount));
@@ -577,9 +695,11 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
 
       finalAppliedRoi = roundToTwoDecimals(Math.max(0, finalAppliedRoi));
 
-      // If nothing to distribute — ROI cap hit, pause ALL active investments
+      // If nothing to distribute — ROI cap hit, pause ALL active investments.
+      // Reported as CAPPED (not skipped) so manual runs never show a skip.
       if (finalAppliedRoi <= 0) {
         await pauseAllActive(freshInvestment.user, session);
+        heldReason = '2X/3X cap reached — no amount remaining (investments paused)';
         return;
       }
 
@@ -659,13 +779,41 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate) => {
         );
       }
 
-      result = { appliedRoiAmount: finalAppliedRoi, status };
+      const isPartial = finalAppliedRoi < rawRoiAmount;
+      result = {
+        appliedRoiAmount: finalAppliedRoi,
+        status: isPartial ? 'CAPPED' : 'CREDITED',
+        reason: isPartial ? 'Partial credit — 2X/3X cap limit reached' : '',
+      };
     });
 
-    return result;
+    if (result) return result;
+
+    // Nothing was credited in this attempt — always a cap/removal hold,
+    // never a skip.
+    return {
+      status: 'CAPPED',
+      reason: heldReason || '2X/3X cap reached — no amount remaining',
+      appliedRoiAmount: 0,
+    };
   } catch (error) {
     if (error.code === 11000) {
-      return null;
+      // Duplicate { investment, roiDate }: this investment was already paid
+      // in this same run (e.g. a retry after a timeout). Surface the
+      // previously credited amount as a success — never a skip, never a
+      // double payment.
+      const existing = await ROIHistory.findOne({ investment: investment._id, roiDate }).lean();
+      if (existing) {
+        const creditedAmount = roundToTwoDecimals(existing.roiAmount || 0);
+        return {
+          status: creditedAmount >= rawRoiAmount ? 'CREDITED' : 'CAPPED',
+          reason: 'Already credited in this run (retry) — not paid twice',
+          appliedRoiAmount: creditedAmount,
+        };
+      }
+      // Duplicate key from anything else — surface as FAILED (retryable),
+      // never silently swallowed.
+      throw error;
     }
     throw error;
   } finally {
