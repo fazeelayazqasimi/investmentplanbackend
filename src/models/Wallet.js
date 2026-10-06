@@ -168,6 +168,10 @@ walletSchema.statics.getOrCreateWallet = async function (userId) {
   return wallet;
 };
 
+// Used after every daily ROI run: Wallet.find({ pendingCommissions: { $gt: 0 } })
+// — without this it scans the whole collection each run.
+walletSchema.index({ pendingCommissions: 1 });
+
 const Wallet = mongoose.model('Wallet', walletSchema);
 
 module.exports = Wallet;

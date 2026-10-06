@@ -64,6 +64,10 @@ const limiter = rateLimit({
   max: Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 100,
   standardHeaders: true,
   legacyHeaders: false,
+  // ROI run-status polling (chunked manual ROI) must not consume the
+  // shared rate-limit budget — mobile carriers use carrier-grade NAT, so
+  // many users can share one IP and polling would trigger 429s.
+  skip: (req) => req.originalUrl.startsWith('/api/admin/roi/runs/'),
   message: {
     success: false,
     message: 'Too many requests, please try again later.',

@@ -5,6 +5,7 @@ const Wallet = require('../models/Wallet');
 const Transaction = require('../models/Transaction');
 const ROIHistory = require('../models/ROIHistory');
 const SystemSettings = require('../models/SystemSettings');
+const RoiRun = require('../models/RoiRun');
 const walletService = require('./walletService');
 const bonusService = require('./bonusService');
 const { getCapStatus, pauseAllActive, pauseIfCapFull } = require('./capService');
@@ -438,20 +439,80 @@ const getUserRoiHistory = async (userId, { page = 1, limit = 20 } = {}) => {
 };
 
 /**
- * Processes ROI manually for ALL active investments using a single
- * admin-supplied percentage. Can be run any number of times — each run
- * credits all eligible active investments again (until 2X/3X caps).
+ * How long a single HTTP request is allowed to spend processing manual
+ * ROI ("one chunk"). Kept well under the serverless function limit
+ * (Vercel default ~10s) so a request always returns progress instead
+ * of being killed mid-run. Override with ROI_CHUNK_BUDGET_MS.
+ */
+const MANUAL_ROI_CHUNK_BUDGET_MS = Number(process.env.ROI_CHUNK_BUDGET_MS) || 6000;
+
+// How long one worker may hold the run's lease. Covers a full chunk
+// (budget + overhead); a crashed/timed-out worker's lease expires and
+// the next request takes over automatically.
+const MANUAL_ROI_LEASE_MS = 30000;
+
+/**
+ * Builds the API report object from a persisted RoiRun document.
+ * Shape is backward-compatible with the original single-shot response
+ * (totalActive/processed/capped/skipped/failed/totalCredited/results/
+ * errors), plus new runId/status/progress fields.
  *
+ * results[] is only included once the run is COMPLETED — intermediate
+ * chunk responses carry counters + progress only (keeps payloads small).
+ */
+const buildManualRunReport = (run) => {
+  const statusOrder = { CREDITED: 0, CAPPED: 1, SKIPPED: 2, FAILED: 3 };
+  const results = [...run.results].sort((a, b) => {
+    const byStatus = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
+    if (byStatus !== 0) return byStatus;
+    return String(a.name).localeCompare(String(b.name));
+  });
+
+  const done = run.processedIds.length;
+  const total = run.investmentIds.length;
+
+  return {
+    runId: run.runId,
+    status: run.status,
+    totalActive: run.totalActive,
+    processed: run.counters.processed,
+    capped: run.counters.capped,
+    skipped: run.counters.skipped,
+    failed: run.counters.failed,
+    totalCredited: run.counters.totalCredited,
+    progress: {
+      done,
+      total,
+      percent: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 100,
+    },
+    results: run.status === 'COMPLETED' ? results : [],
+    errors: run.errors,
+  };
+};
+
+/**
+ * Processes ROI manually for ALL active investments using a single
+ * admin-supplied percentage, in CHUNKS that fit inside one HTTP request.
+ *
+ * Behaviour (unchanged from the original single-shot version):
  * - Uses the supplied percentage directly (ignores schedule)
- * - Respects the 2X per-investment cap
- * - Respects the global 3X earnings cap
+ * - Respects the 2X per-investment cap and the global 3X earnings cap
  * - No duplicate same-day block for manual runs
  * - Does NOT modify AUTO schedule configuration
  * - NEVER skips an active investment: cap-limited users get a partial
- *   credit of whatever remains of their limit (reported as CAPPED), and
- *   future-dated investments are credited immediately
- * - Returns a full per-user report (who was credited, who was held
- *   and why) so the admin UI can show exactly what happened
+ *   credit (reported as CAPPED); future-dated investments are credited
+ *   immediately
+ *
+ * Behaviour (new — why it no longer times out):
+ * - Run state lives in the RoiRun collection: each call processes a
+ *   small time budget of investments, persists progress, returns.
+ * - The client keeps calling with the SAME runId until status=COMPLETED.
+ * - Progress is persisted AFTER every investment, so a timeout/reload
+ *   mid-run loses at most the investment currently in flight — and even
+ *   that one cannot double-pay (unique { investment, roiDate } index on
+ *   ROIHistory is still the real guard).
+ * - A lease prevents two concurrent requests from processing the same
+ *   run at once.
  *
  * @param {number} percentage - the ROI percentage to apply
  * @param {Date} [forDate=new Date()]
@@ -460,10 +521,14 @@ const getUserRoiHistory = async (userId, { page = 1, limit = 20 } = {}) => {
  *   so a retried request re-uses the same { investment, roiDate } key and
  *   the unique index prevents double-crediting users that were already
  *   paid before an interrupted run.
- * @returns {Promise<Object>} run report with totalActive/processed/capped/
- *   skipped/failed/totalCredited/results[]/errors[]
+ * @param {Object} [options]
+ * @param {number} [options.chunkBudgetMs] - per-request time budget
+ * @param {string|null} [options.createdBy] - admin user id starting the run
+ * @returns {Promise<Object>} run report (see buildManualRunReport). While
+ *   unfinished: status='RUNNING' + progress; on final call status='COMPLETED'
+ *   + full results[].
  */
-const processManualRoi = async (percentage, forDate = new Date(), runId = null) => {
+const processManualRoi = async (percentage, forDate = new Date(), runId = null, options = {}) => {
   if (!percentage || percentage <= 0) {
     const error = new Error('ROI percentage must be greater than zero');
     error.statusCode = 400;
@@ -474,12 +539,15 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null) 
 
   if (!settings.roiProcessingEnabled) {
     return {
+      runId: null,
+      status: 'COMPLETED',
       totalActive: 0,
       processed: 0,
       capped: 0,
       skipped: 0,
       failed: 0,
       totalCredited: 0,
+      progress: { done: 0, total: 0, percent: 100 },
       results: [],
       errors: [],
       message: 'ROI processing is disabled',
@@ -495,109 +563,270 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null) 
     const parsed = new Date(runId);
     if (!isNaN(parsed.getTime())) roiDate = parsed;
   }
+  // Legacy callers may omit runId — derive a stable key from roiDate so
+  // even they get resumable, idempotent chunks (runId comes back in the
+  // response for the next call).
+  const runKey = runId || roiDate.toISOString();
 
-  const activeInvestments = await Investment.find({ status: 'ACTIVE' });
+  // ---------- CREATE OR LOAD THE RUN ----------
+  let run = await RoiRun.findOne({ runId: runKey });
 
-  // Resolve display info (name/email) in a separate query so investment.user
-  // stays a plain ObjectId (and is never nulled out for deleted users).
-  const userIds = [...new Set(activeInvestments.map((i) => String(i.user)))];
-  const users = userIds.length
-    ? await User.find({ _id: { $in: userIds } }, 'name email').lean()
-    : [];
-  const userMap = new Map(users.map((u) => [u._id.toString(), u]));
-
-  // Group investments per user so one user's investments never run
-  // concurrently (they share a single wallet document in their transactions).
-  const groupsByUser = new Map();
-  for (const investment of activeInvestments) {
-    const key = String(investment.user);
-    if (!groupsByUser.has(key)) groupsByUser.set(key, []);
-    groupsByUser.get(key).push(investment);
+  if (run && Number(run.percentage) !== Number(percentage)) {
+    const error = new Error(
+      `This run was started at ${run.percentage}% — resume it with the same percentage or start a new run.`
+    );
+    error.statusCode = 400;
+    throw error;
   }
 
-  let processed = 0;
-  let capped = 0;
-  let skipped = 0;
-  let failed = 0;
-  let totalCredited = 0;
-  const errors = [];
-  const results = [];
-
-  const CONCURRENCY = 5;
-
-  const processInvestment = async (investment) => {
-    const userId = String(investment.user);
-    const userDoc = userMap.get(userId) || null;
-    const entry = {
-      userId,
-      name: (userDoc && userDoc.name) || '',
-      email: (userDoc && userDoc.email) || '',
-      investmentId: investment._id.toString(),
-      amount: investment.originalAmount,
-      credited: 0,
-      status: 'SKIPPED',
-      reason: '',
-    };
-
+  if (!run) {
+    // Snapshot the active set once, in stable order — the chunk cursor
+    // walks THIS list so progress is deterministic across requests.
+    const activeInvestments = await Investment.find({ status: 'ACTIVE' }).select('_id');
     try {
-      const outcome = await processManualInvestmentRoi(investment, percentage, roiDate, settings);
-      entry.credited = roundToTwoDecimals(outcome.appliedRoiAmount || 0);
-      entry.status = outcome.status;
-      entry.reason = outcome.reason || '';
-
-      if (outcome.status === 'CREDITED' || outcome.status === 'CAPPED') {
-        // Paid = actually credited (>0). CAPPED covers partial credits AND
-        // cap-full-with-nothing-left — both are holds, never "skipped".
-        if (entry.credited > 0) {
-          processed += 1;
-          totalCredited = roundToTwoDecimals(totalCredited + entry.credited);
-        }
-        if (outcome.status === 'CAPPED') capped += 1;
-      } else {
-        skipped += 1;
-      }
+      run = await RoiRun.create({
+        runId: runKey,
+        type: 'MANUAL',
+        percentage,
+        roiDate,
+        status: 'RUNNING',
+        totalActive: activeInvestments.length,
+        investmentIds: activeInvestments.map((i) => i._id),
+        createdBy: options.createdBy || null,
+      });
     } catch (error) {
-      failed += 1;
-      entry.status = 'FAILED';
-      entry.reason = error.message;
-      errors.push({ investmentId: entry.investmentId, userId, message: error.message });
-    }
-
-    results.push(entry);
-  };
-
-  // Worker pool: a few users at a time, investments of each user sequential.
-  const userGroups = [...groupsByUser.values()];
-  let cursor = 0;
-  const workerCount = Math.max(1, Math.min(CONCURRENCY, userGroups.length));
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (cursor < userGroups.length) {
-      const group = userGroups[cursor];
-      cursor += 1;
-      for (const investment of group) {
-        await processInvestment(investment);
+      // Another request created the same run first — load theirs.
+      if (error && error.code === 11000) {
+        run = await RoiRun.findOne({ runId: runKey });
+      } else {
+        throw error;
       }
     }
-  });
-  await Promise.all(workers);
+  }
 
-  const statusOrder = { CREDITED: 0, CAPPED: 1, SKIPPED: 2, FAILED: 3 };
-  results.sort((a, b) => {
-    const byStatus = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
-    if (byStatus !== 0) return byStatus;
-    return String(a.name).localeCompare(String(b.name));
-  });
+  if (run.status === 'COMPLETED') {
+    return buildManualRunReport(run);
+  }
 
-  return {
-    totalActive: activeInvestments.length,
-    processed,
-    capped,
-    skipped,
-    failed,
-    totalCredited,
-    results,
-    errors,
-  };
+  // ---------- CLAIM THE LEASE (one worker at a time) ----------
+  const claimed = await RoiRun.findOneAndUpdate(
+    {
+      runId: runKey,
+      status: 'RUNNING',
+      $or: [{ leaseUntil: null }, { leaseUntil: { $lte: new Date() } }],
+    },
+    { $set: { leaseUntil: new Date(Date.now() + MANUAL_ROI_LEASE_MS) } },
+    { new: true }
+  );
+
+  if (!claimed) {
+    // Another request is mid-chunk right now — report its progress; the
+    // client will call again (poll) and pick up after it releases.
+    const current = (await RoiRun.findOne({ runId: runKey })) || run;
+    const busy = buildManualRunReport(current);
+    busy.message = 'Another ROI run request is in progress — retry in a moment.';
+    return busy;
+  }
+  run = claimed;
+
+  try {
+    // ---------- WHICH INVESTMENTS ARE PENDING? ----------
+    const doneSet = new Set(run.processedIds.map((id) => String(id)));
+    const pendingIds = run.investmentIds.filter((id) => !doneSet.has(String(id)));
+
+    if (pendingIds.length > 0) {
+      const pendingInvestments = await Investment.find({ _id: { $in: pendingIds } });
+
+      // Edge case: investments deleted between run creation and this
+      // chunk would otherwise stay "pending" forever and the run could
+      // never complete — mark them handled (skipped) immediately.
+      const foundIds = new Set(pendingInvestments.map((i) => String(i._id)));
+      const missingIds = pendingIds.filter((id) => !foundIds.has(String(id)));
+      if (missingIds.length > 0) {
+        await RoiRun.updateOne(
+          { runId: runKey },
+          {
+            $addToSet: { processedIds: { $each: missingIds } },
+            $inc: { 'counters.skipped': missingIds.length },
+          }
+        );
+      }
+
+      // Resolve display info in a separate query so investment.user stays
+      // a plain ObjectId (and is never nulled out for deleted users).
+      const userIds = [...new Set(pendingInvestments.map((i) => String(i.user)))];
+      const users = userIds.length
+        ? await User.find({ _id: { $in: userIds } }, 'name email').lean()
+        : [];
+      const userMap = new Map(users.map((u) => [u._id.toString(), u]));
+
+      // Group investments per user so one user's investments never run
+      // concurrently (they share a single wallet document).
+      const groupsByUser = new Map();
+      for (const investment of pendingInvestments) {
+        const key = String(investment.user);
+        if (!groupsByUser.has(key)) groupsByUser.set(key, []);
+        groupsByUser.get(key).push(investment);
+      }
+
+      const chunkBudgetMs = Number(options.chunkBudgetMs) > 0
+        ? Number(options.chunkBudgetMs)
+        : MANUAL_ROI_CHUNK_BUDGET_MS;
+      const deadline = Date.now() + chunkBudgetMs;
+      const CONCURRENCY = 5;
+
+      const processInvestment = async (investment) => {
+        const userId = String(investment.user);
+        const userDoc = userMap.get(userId) || null;
+        const entry = {
+          userId,
+          name: (userDoc && userDoc.name) || '',
+          email: (userDoc && userDoc.email) || '',
+          investmentId: investment._id.toString(),
+          amount: investment.originalAmount,
+          credited: 0,
+          status: 'SKIPPED',
+          reason: '',
+        };
+
+        try {
+          const outcome = await processManualInvestmentRoi(investment, percentage, run.roiDate, settings);
+          entry.credited = roundToTwoDecimals(outcome.appliedRoiAmount || 0);
+          entry.status = outcome.status;
+          entry.reason = outcome.reason || '';
+
+          if (outcome.status === 'CREDITED' || outcome.status === 'CAPPED') {
+            // Paid = actually credited (>0). CAPPED covers partial credits AND
+            // cap-full-with-nothing-left — both are holds, never "skipped".
+            if (entry.credited > 0) {
+              entry._incProcessed = 1;
+              entry._incTotalCredited = entry.credited;
+            }
+            if (outcome.status === 'CAPPED') entry._incCapped = 1;
+          } else {
+            entry._incSkipped = 1;
+          }
+        } catch (error) {
+          entry.status = 'FAILED';
+          entry.reason = error.message;
+        }
+
+        // ---------- PERSIST PROGRESS IMMEDIATELY ----------
+        // Crash/timeout-safe: everything credited so far stays credited,
+        // and a resume picks up exactly at the next investment.
+        const update = {
+          $addToSet: { processedIds: investment._id },
+          $push: {
+            // $slice caps the array at the DB level — updateOne bypasses
+            // schema validation, so the model's pre-validate cap alone
+            // would not apply here.
+            results: {
+              $each: [{
+                userId: entry.userId,
+                name: entry.name,
+                email: entry.email,
+                investmentId: entry.investmentId,
+                amount: entry.amount,
+                credited: entry.credited,
+                status: entry.status,
+                reason: entry.reason,
+              }],
+              $slice: -500,
+            },
+          },
+          $inc: { 'counters.totalCredited': entry._incTotalCredited || 0 },
+        };
+        if (entry._incProcessed) update.$inc['counters.processed'] = entry._incProcessed;
+        if (entry._incCapped) update.$inc['counters.capped'] = entry._incCapped;
+        if (entry._incSkipped) update.$inc['counters.skipped'] = entry._incSkipped;
+        if (entry.status === 'FAILED') {
+          update.$inc['counters.failed'] = 1;
+          update.$push.errors = {
+            $each: [{
+              investmentId: entry.investmentId,
+              userId: entry.userId,
+              message: entry.reason,
+            }],
+            $slice: -500,
+          };
+        }
+
+        try {
+          await RoiRun.updateOne({ runId: runKey }, update);
+        } catch (persistError) {
+          // Never fail an already-credited investment because bookkeeping
+          // failed — the unique index still guards against double-pay on
+          // the next resume (this entry will be retried and report as
+          // "Already credited in this run (retry)").
+          console.error('[RoiRun] progress persist failed:', persistError.message);
+        }
+      };
+
+      // Worker pool: a few users at a time, investments of each user
+      // sequential. Stops launching new work once the time budget is used —
+      // but ALWAYS completes at least one investment per chunk so a run can
+      // never stall at 0% progress (guarantees forward progress on resume).
+      const userGroups = [...groupsByUser.values()];
+      let cursor = 0;
+      let processedThisChunk = 0;
+      const workerCount = Math.max(1, Math.min(CONCURRENCY, userGroups.length));
+      const workers = Array.from({ length: workerCount }, async () => {
+        while (cursor < userGroups.length) {
+          if (Date.now() >= deadline && processedThisChunk > 0) break;
+          const group = userGroups[cursor];
+          cursor += 1;
+          for (const investment of group) {
+            if (Date.now() >= deadline && processedThisChunk > 0) break;
+            await processInvestment(investment);
+            processedThisChunk += 1;
+          }
+        }
+      });
+      await Promise.all(workers);
+    }
+
+    // ---------- FINISH OR RELEASE ----------
+    const fresh = (await RoiRun.findOne({ runId: runKey })) || run;
+    const stillPending = fresh.processedIds.length < fresh.investmentIds.length;
+
+    if (!stillPending) {
+      await RoiRun.updateOne(
+        { runId: runKey, status: 'RUNNING' },
+        { $set: { status: 'COMPLETED', completedAt: new Date(), leaseUntil: null } }
+      );
+      fresh.status = 'COMPLETED';
+      fresh.completedAt = new Date();
+    } else {
+      // Release the lease so the next client call can immediately take
+      // the following chunk.
+      await RoiRun.updateOne({ runId: runKey }, { $set: { leaseUntil: null } });
+    }
+    fresh.leaseUntil = null;
+
+    return buildManualRunReport(fresh);
+  } finally {
+    // Always release the lease on the way out — the chunk above either
+    // finished the run or released it explicitly; this is a safety net
+    // for thrown errors so a resume is never blocked for 30s.
+    await RoiRun.updateOne(
+      { runId: runKey, leaseUntil: { $ne: null } },
+      { $set: { leaseUntil: null } }
+    ).catch(() => {});
+  }
+};
+
+/**
+ * Fetches the current state/report of a manual ROI run by runId.
+ * Used by the client to resume after a reload or to collect the final
+ * report of a run it lost the last response of.
+ *
+ * @param {string} runId
+ * @returns {Promise<Object|null>} report or null when the run doesn't exist
+ */
+const getRoiRun = async (runId) => {
+  if (!runId) return null;
+  const run = await RoiRun.findOne({ runId: String(runId) });
+  return run ? buildManualRunReport(run) : null;
 };
 
 /**
@@ -770,12 +999,15 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate, setti
           session,
         });
 
-        // Distribute profit share from ROI to uplines
+        // Distribute profit share from ROI to uplines.
+        // Pass this run's settings so the whole manual run doesn't
+        // re-fetch (and possibly re-save) SystemSettings per investment.
         await bonusService.creditProfitShareFromRoi(
           freshInvestment.user,
           finalAppliedRoi,
           session,
-          freshInvestment._id
+          freshInvestment._id,
+          settings
         );
       }
 
@@ -802,7 +1034,14 @@ const processManualInvestmentRoi = async (investment, percentage, roiDate, setti
       // in this same run (e.g. a retry after a timeout). Surface the
       // previously credited amount as a success — never a skip, never a
       // double payment.
-      const existing = await ROIHistory.findOne({ investment: investment._id, roiDate }).lean();
+      //
+      // The lookup may briefly return null if the winning transaction is
+      // still committing (race), so retry a few times before giving up.
+      let existing = null;
+      for (let attempt = 0; attempt < 3 && !existing; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        existing = await ROIHistory.findOne({ investment: investment._id, roiDate }).lean();
+      }
       if (existing) {
         const creditedAmount = roundToTwoDecimals(existing.roiAmount || 0);
         return {
@@ -825,6 +1064,7 @@ module.exports = {
   processInvestmentRoi,
   processAllActiveInvestments,
   processManualRoi,
+  getRoiRun,
   getInvestmentRoiHistory,
   getUserRoiHistory,
   getApplicableRoiPercentage,

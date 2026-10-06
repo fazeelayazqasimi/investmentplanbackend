@@ -640,10 +640,13 @@ const distributeProfitShare = async (totalAmount, adminId) => {
  * @param {number} roiAmount - the ROI amount (not investment amount)
  * @param {import('mongoose').ClientSession} session - caller's MongoDB session
  * @param {string} [investmentId] - the investment that generated this ROI
+ * @param {Object} [settingsOverride=null] - pass the caller's already-loaded
+ *   SystemSettings to avoid re-fetching it for every investment in a run.
+ *   When omitted, settings are loaded as before (backward compatible).
  * @returns {Promise<{ distributed: number, recipients: number }>}
  */
-const creditProfitShareFromRoi = async (investorId, roiAmount, session, investmentId = null) => {
-  const settings = await SystemSettings.getSettings();
+const creditProfitShareFromRoi = async (investorId, roiAmount, session, investmentId = null, settingsOverride = null) => {
+  const settings = settingsOverride || await SystemSettings.getSettings();
 
   const psLevels = settings.profitShareLevels || [];
   if (psLevels.length === 0) {
@@ -680,8 +683,8 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
 
     const upline = await User.findById(currentUserId).session(session);
     if (!upline || !upline.isActivated) {
-      const currentUser = await User.findById(currentUserId).session(session);
-      currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
+      // upline IS the current user's doc — no need to fetch it again.
+      currentUserId = (upline && upline.referredBy) ? upline.referredBy.toString() : null;
       continue;
     }
 
@@ -739,9 +742,9 @@ const creditProfitShareFromRoi = async (investorId, roiAmount, session, investme
       await pauseAllActive(currentUserId, session);
     }
 
-    // Advance to next upline in chain
-    const currentUser = await User.findById(currentUserId).session(session);
-    currentUserId = (currentUser && currentUser.referredBy) ? currentUser.referredBy.toString() : null;
+    // Advance to next upline in chain (upline doc is already loaded —
+    // currentUserId still points at this same user, so skip the re-fetch)
+    currentUserId = upline.referredBy ? upline.referredBy.toString() : null;
   }
 
   return { distributed, recipients };

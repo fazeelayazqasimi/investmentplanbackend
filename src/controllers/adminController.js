@@ -711,11 +711,47 @@ const processRoiManual = asyncHandler(async (req, res) => {
   }
 
   const forDate = new Date();
-  const result = await roiService.processManualRoi(numPercentage, forDate, runIdentifier);
+  // NOTE: this now processes ONE CHUNK (small time budget) of the run and
+  // returns progress. The client keeps calling with the same runId until
+  // data.status === 'COMPLETED'. Response shape is backward-compatible:
+  // the old report fields are all still present in data.
+  const result = await roiService.processManualRoi(numPercentage, forDate, runIdentifier, {
+    createdBy: (req.user && req.user.id) || null,
+  });
+
+  const inProgress = result.status === 'RUNNING';
   res.status(200).json({
     success: true,
-    message: 'Manual ROI processing completed',
+    message: inProgress
+      ? `ROI processing in progress (${result.progress.done}/${result.progress.total})`
+      : 'Manual ROI processing completed',
     data: result,
+  });
+});
+
+// ==========================================
+// @desc    Get status/report of a manual ROI run (for resume after
+//          reload/timeout and for fetching the final report)
+// @route   GET /api/admin/roi/runs/:runId
+// @access  Private (Admin)
+// ==========================================
+const getRoiRunStatus = asyncHandler(async (req, res) => {
+  const { runId } = req.params || {};
+  if (!runId) {
+    res.status(400);
+    throw new Error('runId is required');
+  }
+
+  const run = await roiService.getRoiRun(runId);
+  if (!run) {
+    res.status(404);
+    throw new Error('ROI run not found');
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'ROI run status',
+    data: run,
   });
 });
 
@@ -1623,6 +1659,7 @@ module.exports = {
   updateSettings,
   processRoi,
   processRoiManual,
+  getRoiRunStatus,
   distributeProfitShare,
   triggerRoiTransfer,
   triggerProfitShareTransfer,
