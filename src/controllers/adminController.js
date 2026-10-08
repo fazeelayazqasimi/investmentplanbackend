@@ -10,6 +10,7 @@ const roiService = require('../services/roiService');
 const walletService = require('../services/walletService');
 const { roundToTwoDecimals } = require('../services/walletService');
 const bonusService = require('../services/bonusService');
+const { resolveCounterpartyUsers } = require('../utils/resolveCounterparty');
 const bcrypt = require('bcrypt');
 
 // ==========================================
@@ -355,6 +356,9 @@ const listTransactions = asyncHandler(async (req, res) => {
     Transaction.aggregate(pipeline),
     Transaction.aggregate(countPipeline),
   ]);
+
+  // Resolve the other party (sender/receiver) for fund transfer transactions
+  await resolveCounterpartyUsers(transactions);
 
   const total = countRes[0] ? countRes[0].total : 0;
 
