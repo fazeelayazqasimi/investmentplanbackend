@@ -331,7 +331,10 @@ const processAllActiveInvestments = async (forDate = new Date()) => {
 
   for (const investment of activeInvestments) {
     try {
-      const result = await processInvestmentRoi(investment, settings, forDate);
+      // Transient write conflicts are retried — they are not failures.
+      const result = await withTransientRetry(() =>
+        processInvestmentRoi(investment, settings, forDate)
+      );
       if (result) {
         processed += 1;
       } else {
@@ -452,6 +455,48 @@ const MANUAL_ROI_CHUNK_BUDGET_MS = Number(process.env.ROI_CHUNK_BUDGET_MS) || 60
 const MANUAL_ROI_LEASE_MS = 30000;
 
 /**
+ * MongoDB write conflicts (code 112) and other transient transaction
+ * errors are NOT real failures — another transaction was writing the
+ * same document (shared upline wallet, overlapping worker). The
+ * transaction was already aborted by the server, so simply running it
+ * again is safe and is the officially recommended handling.
+ */
+const isTransientRoiError = (error) => {
+  if (!error) return false;
+  const labels = error.errorLabels || error.labels;
+  if (Array.isArray(labels) && labels.includes('TransientTransactionError')) return true;
+  // 112 = WriteConflict, 20 = DuplicateKey (handled elsewhere too),
+  // 251 = NoSuchTransaction, 244 = TemporarilyUnavailable.
+  if ([112, 20, 251, 244].includes(error.code)) return true;
+  return /write conflict|transient transaction/i.test(error.message || '');
+};
+
+/**
+ * Runs `fn`, retrying transient transaction errors with exponential
+ * backoff + jitter. Non-transient errors are rethrown immediately.
+ */
+const withTransientRetry = async (fn, { attempts = 4, baseDelayMs = 120 } = {}) => {
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (!isTransientRoiError(error) || attempt === attempts - 1) throw error;
+      lastError = error;
+      const delay = baseDelayMs * (2 ** attempt) + Math.floor(Math.random() * 100);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  throw lastError;
+};
+
+// Chunk-level retry ceiling for a single investment. Each attempt itself
+// retries transient errors a few times, so this is a very generous cap —
+// a FAILED row in the report now means a genuinely permanent error, not
+// a lost write conflict.
+const MANUAL_ROI_MAX_ATTEMPTS_PER_INVESTMENT = 10;
+
+/**
  * Builds the API report object from a persisted RoiRun document.
  * Shape is backward-compatible with the original single-shot response
  * (totalActive/processed/capped/skipped/failed/totalCredited/results/
@@ -462,7 +507,13 @@ const MANUAL_ROI_LEASE_MS = 30000;
  */
 const buildManualRunReport = (run) => {
   const statusOrder = { CREDITED: 0, CAPPED: 1, SKIPPED: 2, FAILED: 3 };
-  const results = [...run.results].sort((a, b) => {
+  // A retried investment can appear more than once in the raw array —
+  // only the LAST (i.e. final) outcome for each investment is meaningful.
+  const byInvestment = new Map();
+  for (const entry of run.results) {
+    byInvestment.set(String(entry.investmentId), entry);
+  }
+  const results = [...byInvestment.values()].sort((a, b) => {
     const byStatus = (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9);
     if (byStatus !== 0) return byStatus;
     return String(a.name).localeCompare(String(b.name));
@@ -568,6 +619,39 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
   // response for the next call).
   const runKey = runId || roiDate.toISOString();
 
+  // ---------- SINGLE ACTIVE RUN GUARD ----------
+  // Runs abandoned by a crashed/timed-out worker are swept so they can
+  // never block a new run.
+  await RoiRun.updateMany(
+    { status: 'RUNNING', updatedAt: { $lt: new Date(Date.now() - 10 * 60 * 1000) } },
+    { $set: { status: 'FAILED', leaseUntil: null, completedAt: new Date() } }
+  );
+
+  // Only one manual run may be active at a time. Two concurrent runs
+  // (two tabs/devices) double-pay users — each has its own roiDate, so
+  // the unique { investment, roiDate } index cannot stop it — and they
+  // flood every shared wallet with write conflicts.
+  const activeRun = await RoiRun.findOne({
+    status: 'RUNNING',
+    updatedAt: { $gte: new Date(Date.now() - 2 * 60 * 1000) },
+    runId: { $ne: runKey },
+  }).sort({ createdAt: -1 });
+
+  if (activeRun) {
+    // Same percentage → hand the client the running run's id so both
+    // sides converge on ONE run instead of starting a second.
+    if (Number(activeRun.percentage) === Number(percentage)) {
+      const adopted = buildManualRunReport(activeRun);
+      adopted.message = 'Another manual ROI run is already in progress — continuing that run.';
+      return adopted;
+    }
+    const conflictError = new Error(
+      `A manual ROI run at ${activeRun.percentage}% is already in progress. Wait for it to finish before starting another.`
+    );
+    conflictError.statusCode = 409;
+    throw conflictError;
+  }
+
   // ---------- CREATE OR LOAD THE RUN ----------
   let run = await RoiRun.findOne({ runId: runKey });
 
@@ -609,13 +693,17 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
   }
 
   // ---------- CLAIM THE LEASE (one worker at a time) ----------
+  // The exact lease timestamp is remembered so renewals/releases can only
+  // ever touch OUR lease — a worker that lost the lease must not release
+  // the one that took over.
+  let myLeaseUntil = new Date(Date.now() + MANUAL_ROI_LEASE_MS);
   const claimed = await RoiRun.findOneAndUpdate(
     {
       runId: runKey,
       status: 'RUNNING',
       $or: [{ leaseUntil: null }, { leaseUntil: { $lte: new Date() } }],
     },
-    { $set: { leaseUntil: new Date(Date.now() + MANUAL_ROI_LEASE_MS) } },
+    { $set: { leaseUntil: myLeaseUntil } },
     { new: true }
   );
 
@@ -628,6 +716,49 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
     return busy;
   }
   run = claimed;
+
+  // Lease fence: renewed before every user group. Renewal matches on OUR
+  // exact lease value, so once another worker has taken the run over this
+  // worker stops immediately instead of writing the same wallets twice.
+  //
+  // Two workers must never run renewals concurrently — each would consume
+  // the other's lease value and both would conclude they lost it. So a
+  // renewal is single-flight (both workers await the same promise) and is
+  // skipped entirely if it happened recently.
+  let leaseLost = false;
+  let leaseRenewal = null;
+  let lastLeaseRenewalAt = Date.now();
+  const LEASE_RENEW_THROTTLE_MS = 5000;
+  const renewLease = () => {
+    if (leaseLost) return Promise.resolve(false);
+    if (!leaseRenewal) {
+      if (Date.now() - lastLeaseRenewalAt < LEASE_RENEW_THROTTLE_MS) {
+        return Promise.resolve(true);
+      }
+      lastLeaseRenewalAt = Date.now();
+      leaseRenewal = (async () => {
+        try {
+          const nextLease = new Date(Date.now() + MANUAL_ROI_LEASE_MS);
+          const renewed = await RoiRun.updateOne(
+            { runId: runKey, status: 'RUNNING', leaseUntil: myLeaseUntil },
+            { $set: { leaseUntil: nextLease } }
+          );
+          if (!renewed.matchedCount) {
+            leaseLost = true;
+            return false;
+          }
+          myLeaseUntil = nextLease;
+          return true;
+        } catch (error) {
+          leaseLost = true;
+          return false;
+        } finally {
+          leaseRenewal = null;
+        }
+      })();
+    }
+    return leaseRenewal;
+  };
 
   try {
     // ---------- WHICH INVESTMENTS ARE PENDING? ----------
@@ -673,7 +804,11 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
         ? Number(options.chunkBudgetMs)
         : MANUAL_ROI_CHUNK_BUDGET_MS;
       const deadline = Date.now() + chunkBudgetMs;
-      const CONCURRENCY = 5;
+      // Kept low on purpose: parallel transactions that touch the same
+      // shared document (a common upline's wallet during profit share)
+      // cause write conflicts. Conflicts are retried, but fewer of them
+      // keeps the run fast and quiet.
+      const CONCURRENCY = 2;
 
       const processInvestment = async (investment) => {
         const userId = String(investment.user);
@@ -689,8 +824,13 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
           reason: '',
         };
 
+        let hardFailure = false;
         try {
-          const outcome = await processManualInvestmentRoi(investment, percentage, run.roiDate, settings);
+          // Transient write conflicts (shared upline wallet, overlapping
+          // worker) are retried here — they are not real failures.
+          const outcome = await withTransientRetry(() =>
+            processManualInvestmentRoi(investment, percentage, run.roiDate, settings)
+          );
           entry.credited = roundToTwoDecimals(outcome.appliedRoiAmount || 0);
           entry.status = outcome.status;
           entry.reason = outcome.reason || '';
@@ -709,6 +849,34 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
         } catch (error) {
           entry.status = 'FAILED';
           entry.reason = error.message;
+          hardFailure = true;
+        }
+
+        // ---------- STILL FAILING? KEEP IT PENDING FOR THE NEXT CHUNK ----------
+        // A failed investment must never be marked "done" — that is exactly
+        // how users silently lost their ROI. Count the attempt; unless this
+        // was the last allowed one, leave the investment pending so the next
+        // chunk retries it (the run cannot complete while anything is pending).
+        if (hardFailure) {
+          let attemptNumber = 1;
+          try {
+            const withAttempt = await RoiRun.findOneAndUpdate(
+              { runId: runKey },
+              { $inc: { [`attempts.${entry.investmentId}`]: 1 } },
+              { new: true }
+            );
+            attemptNumber =
+              (withAttempt && withAttempt.attempts && withAttempt.attempts[entry.investmentId]) || 1;
+          } catch (persistError) {
+            console.error('[RoiRun] attempt counter failed:', persistError.message);
+          }
+
+          if (attemptNumber < MANUAL_ROI_MAX_ATTEMPTS_PER_INVESTMENT) {
+            console.error(
+              `[ManualROI] ${entry.investmentId} failed (attempt ${attemptNumber}), will retry in next chunk: ${entry.reason}`
+            );
+            return;
+          }
         }
 
         // ---------- PERSIST PROGRESS IMMEDIATELY ----------
@@ -772,10 +940,13 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
       const workerCount = Math.max(1, Math.min(CONCURRENCY, userGroups.length));
       const workers = Array.from({ length: workerCount }, async () => {
         while (cursor < userGroups.length) {
+          if (leaseLost) break;
           if (Date.now() >= deadline && processedThisChunk > 0) break;
           const group = userGroups[cursor];
           cursor += 1;
+          if (!(await renewLease())) break;
           for (const investment of group) {
+            if (leaseLost) break;
             if (Date.now() >= deadline && processedThisChunk > 0) break;
             await processInvestment(investment);
             processedThisChunk += 1;
@@ -786,12 +957,20 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
     }
 
     // ---------- FINISH OR RELEASE ----------
+    // If the lease was lost mid-chunk another worker owns the run now:
+    // don't touch its state, just report the latest progress.
     const fresh = (await RoiRun.findOne({ runId: runKey })) || run;
+
+    if (leaseLost) {
+      fresh.leaseUntil = null;
+      return buildManualRunReport(fresh);
+    }
+
     const stillPending = fresh.processedIds.length < fresh.investmentIds.length;
 
     if (!stillPending) {
       await RoiRun.updateOne(
-        { runId: runKey, status: 'RUNNING' },
+        { runId: runKey, status: 'RUNNING', leaseUntil: myLeaseUntil },
         { $set: { status: 'COMPLETED', completedAt: new Date(), leaseUntil: null } }
       );
       fresh.status = 'COMPLETED';
@@ -799,17 +978,21 @@ const processManualRoi = async (percentage, forDate = new Date(), runId = null, 
     } else {
       // Release the lease so the next client call can immediately take
       // the following chunk.
-      await RoiRun.updateOne({ runId: runKey }, { $set: { leaseUntil: null } });
+      await RoiRun.updateOne(
+        { runId: runKey, leaseUntil: myLeaseUntil },
+        { $set: { leaseUntil: null } }
+      );
     }
     fresh.leaseUntil = null;
 
     return buildManualRunReport(fresh);
   } finally {
-    // Always release the lease on the way out — the chunk above either
+    // Always release OUR lease on the way out — the chunk above either
     // finished the run or released it explicitly; this is a safety net
-    // for thrown errors so a resume is never blocked for 30s.
+    // for thrown errors so a resume is never blocked for 30s. Matching
+    // the exact value means a takeover worker's lease is never freed.
     await RoiRun.updateOne(
-      { runId: runKey, leaseUntil: { $ne: null } },
+      { runId: runKey, leaseUntil: myLeaseUntil },
       { $set: { leaseUntil: null } }
     ).catch(() => {});
   }

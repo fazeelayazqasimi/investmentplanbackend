@@ -66,8 +66,11 @@ const limiter = rateLimit({
   legacyHeaders: false,
   // ROI run-status polling (chunked manual ROI) must not consume the
   // shared rate-limit budget — mobile carriers use carrier-grade NAT, so
-  // many users can share one IP and polling would trigger 429s.
-  skip: (req) => req.originalUrl.startsWith('/api/admin/roi/runs/'),
+  // many users can share one IP and polling would trigger 429s. The
+  // manual ROI endpoint is a polling endpoint too (one call per chunk).
+  skip: (req) =>
+    req.originalUrl.startsWith('/api/admin/roi/runs/') ||
+    req.originalUrl.startsWith('/api/admin/roi/process-manual'),
   message: {
     success: false,
     message: 'Too many requests, please try again later.',

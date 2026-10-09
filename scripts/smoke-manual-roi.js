@@ -230,6 +230,90 @@ async function main() {
       (u1Wallet.totalEligibleEarnings || 0) > 0,
       `upline totalEligibleEarnings tracked (got ${u1Wallet.totalEligibleEarnings})`
     );
+
+    // ---------- TEST 10: transient write conflicts are retried ----------
+    console.log('\nT10: Injected write conflicts are retried, never FAILED');
+    const bonusService = require('../src/services/bonusService');
+    const originalProfitShare = bonusService.creditProfitShareFromRoi;
+    let injectedConflicts = 0;
+    bonusService.creditProfitShareFromRoi = async function (...args) {
+      if (injectedConflicts < 3) {
+        injectedConflicts += 1;
+        const conflict = new Error(
+          'Caused by :: Write conflict during plan execution and yielding is disabled. :: Please retry your operation or multi-document transaction.'
+        );
+        conflict.code = 112;
+        throw conflict;
+      }
+      return originalProfitShare.apply(this, args);
+    };
+    const rowsBeforeE = await ROIHistory.countDocuments({});
+    const runE = new Date().toISOString();
+    let resE = null;
+    try {
+      ({ result: resE } = await driveRun(1, runE, { chunkBudgetMs: 5 }));
+    } finally {
+      bonusService.creditProfitShareFromRoi = originalProfitShare;
+    }
+    ok(resE.status === 'COMPLETED', `run E completes (status=${resE.status})`);
+    ok(injectedConflicts > 0, `write conflicts were actually injected (${injectedConflicts})`);
+    ok(resE.failed === 0, `failed=0 despite write conflicts (got ${resE.failed})`);
+    ok(resE.processed === 8, `every investment still paid (processed=${resE.processed})`);
+    rows = await ROIHistory.countDocuments({});
+    ok(rows === rowsBeforeE + 8, `ROIHistory +8 rows, no double pay (got ${rows - rowsBeforeE})`);
+
+    // ---------- TEST 11: only ONE manual run may be active ----------
+    console.log('\nT11: Second runId while a run is active → adopts the active run');
+    const runsBeforeF = await RoiRun.countDocuments({});
+    const runF = new Date().toISOString();
+    const firstF = await roiService.processManualRoi(1, new Date(), runF, { chunkBudgetMs: 1 });
+    ok(firstF.status === 'RUNNING', `run F started (status=${firstF.status})`);
+
+    // Same percentage, different runId → must NOT create a second run.
+    const adopted = await roiService.processManualRoi(1, new Date(), new Date().toISOString(), {
+      chunkBudgetMs: 5,
+    });
+    ok(adopted.runId === runF, `second runId adopts the active run (got ${adopted.runId})`);
+    ok((await RoiRun.countDocuments({})) === runsBeforeF + 1, 'no second run document created');
+
+    // Different percentage while a run is active → rejected, not started.
+    let threw409 = false;
+    try {
+      await roiService.processManualRoi(2, new Date(), new Date().toISOString(), { chunkBudgetMs: 5 });
+    } catch (e) {
+      threw409 = e.statusCode === 409;
+    }
+    ok(threw409, 'different percentage rejected with 409 while a run is active');
+    ok((await RoiRun.countDocuments({})) === runsBeforeF + 1, 'still no second run document');
+
+    const { result: resF } = await driveRun(1, runF, { chunkBudgetMs: 5 });
+    ok(resF.status === 'COMPLETED', `run F completes after adopt attempts (status=${resF.status})`);
+
+    // ---------- TEST 12: stale RUNNING run is swept, never blocks ----------
+    console.log('\nT12: Stale RUNNING run is swept and does not block a new run');
+    const staleId = `stale-${Date.now()}`;
+    await RoiRun.create({
+      runId: staleId,
+      type: 'MANUAL',
+      percentage: 9,
+      roiDate: new Date(),
+      status: 'RUNNING',
+      totalActive: 0,
+      investmentIds: [],
+      processedIds: [],
+    });
+    await RoiRun.updateOne(
+      { runId: staleId },
+      { $set: { updatedAt: new Date(Date.now() - 15 * 60 * 1000) } },
+      { timestamps: false }
+    );
+    const runG = new Date().toISOString();
+    const { result: resG } = await driveRun(1, runG, { chunkBudgetMs: 5 });
+    ok(resG.status === 'COMPLETED', `new run starts and completes despite stale run (status=${resG.status})`);
+    const sweptStale = await RoiRun.findOne({ runId: staleId }).lean();
+    ok(sweptStale && sweptStale.status === 'FAILED', `stale run swept to FAILED (got ${sweptStale && sweptStale.status})`);
+    rows = await ROIHistory.countDocuments({});
+    ok(rows === rowsBeforeE + 24, `final ROIHistory rows=${rowsBeforeE + 24} (got ${rows})`);
   } finally {
     try {
       await mongoose.disconnect();

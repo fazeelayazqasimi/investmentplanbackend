@@ -117,6 +117,16 @@ const roiRunSchema = new mongoose.Schema(
       default: [],
     },
 
+    // Per-investment retry counter (keyed by investmentId string).
+    // An investment that hits a transient error (MongoDB write conflict)
+    // is NOT marked processed — it stays pending and is retried in the
+    // next chunk. This map bounds that: after MAX attempts it is finally
+    // recorded as FAILED so the run can always complete.
+    attempts: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+
     // Concurrency guard: a worker must renew this lease before processing
     // a chunk. A stale lease (crashed/timed-out worker) lets the next
     // request take over.
