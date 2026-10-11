@@ -520,6 +520,21 @@ const getStats = asyncHandler(async (req, res) => {
     ]),
   ]);
 
+  // ---- Today's ROI (business date = UTC calendar day) ----
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const todayEnd = new Date();
+  todayEnd.setUTCHours(23, 59, 59, 999);
+  const todayRoiMatch = { roiDate: { $gte: todayStart, $lte: todayEnd }, status: { $in: ['SUCCESS', 'CAPPED'] } };
+
+  const [roiTodayAgg, roiTodayCount] = await Promise.all([
+    ROIHistory.aggregate([
+      { $match: todayRoiMatch },
+      { $group: { _id: null, total: { $sum: '$roiAmount' } } },
+    ]),
+    ROIHistory.countDocuments(todayRoiMatch),
+  ]);
+
   res.status(200).json({
     success: true,
     message: 'Stats fetched successfully',
@@ -542,6 +557,8 @@ const getStats = asyncHandler(async (req, res) => {
       commissionThisMonth: commissionAggMonthly[0] ? commissionAggMonthly[0].total : 0,
       withdrawalThisMonth: withdrawalAgg[0] ? withdrawalAgg[0].total : 0,
       totalWalletBalance: walletBalanceAgg[0] ? walletBalanceAgg[0].total : 0,
+      roiTodayAmount: roiTodayAgg[0] ? roiTodayAgg[0].total : 0,
+      roiTodayCount,
       usersVsAdmins: [
         { name: 'Users', value: totalUsers },
         { name: 'Admins', value: totalAdmins },
@@ -1701,6 +1718,124 @@ const updateAutoRoiSettings = asyncHandler(async (req, res) => {
   });
 });
 
+// ==========================================
+// @desc    Get ROI history with date filters + same-day duplicate detection
+// @route   GET /api/admin/roi/history
+// @access  Private (Admin)
+// ==========================================
+const getRoiHistory = asyncHandler(async (req, res) => {
+  const { date, dateFrom, dateTo, search, page = 1, limit = 20, checkDuplicates } = req.query;
+  const runDupCheck = checkDuplicates === '1' || checkDuplicates === 'true';
+  const pageNum = Math.max(1, Number(page));
+  const lim = Math.min(100, Number(limit) || 20);
+  const skip = (pageNum - 1) * lim;
+
+  // Resolve roiDate range (business date, stored as midnight UTC)
+  let rangeStart = null;
+  let rangeEnd = null;
+  if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    rangeStart = new Date(date + 'T00:00:00.000Z');
+    rangeEnd = new Date(date + 'T23:59:59.999Z');
+  } else if (dateFrom || dateTo) {
+    if (dateFrom) rangeStart = new Date(dateFrom + 'T00:00:00.000Z');
+    if (dateTo) rangeEnd = new Date(dateTo + 'T23:59:59.999Z');
+  }
+
+  const match = {};
+  if (rangeStart || rangeEnd) {
+    match.roiDate = {};
+    if (rangeStart) match.roiDate.$gte = rangeStart;
+    if (rangeEnd) match.roiDate.$lte = rangeEnd;
+  }
+  if (search && search.trim()) {
+    const escaped = search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(escaped, 'i');
+    const users = await User.find({ $or: [{ name: re }, { email: re }] }).select('_id').lean();
+    const ids = users.map((u) => u._id);
+    if (ids.length === 0) {
+      return res.status(200).json({
+        success: true,
+        message: 'ROI history fetched successfully',
+        data: {
+          history: [],
+          pagination: { page: pageNum, limit: lim, total: 0, totalPages: 0 },
+          duplicates: [],
+          duplicateCount: 0,
+        },
+      });
+    }
+    match.user = { $in: ids };
+  }
+
+  // Duplicate detection: same investment credited more than once on the
+  // same calendar day. Manual runs use a raw timestamp as roiDate, so the
+  // DB unique { investment, roiDate } index cannot prevent two same-day
+  // payouts — this aggregation catches them.
+  const dupPipeline = [
+    ...(Object.keys(match).length ? [{ $match: { ...match } }] : []),
+    {
+      $group: {
+        _id: {
+          investment: '$investment',
+          day: { $dateToString: { format: '%Y-%m-%d', date: '$roiDate' } },
+        },
+        count: { $sum: 1 },
+        totalAmount: { $sum: '$roiAmount' },
+        user: { $first: '$user' },
+        dates: { $push: '$roiDate' },
+        statuses: { $push: '$status' },
+      },
+    },
+    { $match: { count: { $gt: 1 } } },
+    { $sort: { '_id.day': -1 } },
+    { $limit: 50 },
+  ];
+
+  const [rows, total, dupAgg] = await Promise.all([
+    ROIHistory.find(match)
+      .sort({ roiDate: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(lim)
+      .populate({ path: 'user', select: 'name email' })
+      .populate({ path: 'investment', select: 'originalAmount' })
+      .lean(),
+    ROIHistory.countDocuments(match),
+    runDupCheck ? ROIHistory.aggregate(dupPipeline) : Promise.resolve([]),
+  ]);
+
+  let duplicates = dupAgg;
+  if (duplicates.length > 0) {
+    const userIds = [...new Set(duplicates.map((d) => String(d.user)))];
+    const [users, investments] = await Promise.all([
+      User.find({ _id: { $in: userIds } }).select('name email').lean(),
+      Investment.find({ _id: { $in: duplicates.map((d) => d._id.investment) } }).select('originalAmount').lean(),
+    ]);
+    const userMap = Object.fromEntries(users.map((u) => [String(u._id), { name: u.name, email: u.email }]));
+    const invMap = Object.fromEntries(investments.map((i) => [String(i._id), i.originalAmount]));
+    duplicates = duplicates.map((d) => ({
+      investment: d._id.investment,
+      day: d._id.day,
+      count: d.count,
+      totalAmount: d.totalAmount,
+      dates: d.dates,
+      statuses: d.statuses,
+      user: { _id: d.user, ...(userMap[String(d.user)] || {}) },
+      investmentAmount: invMap[String(d._id.investment)] || 0,
+    }));
+  }
+
+  res.status(200).json({
+    success: true,
+    message: 'ROI history fetched successfully',
+    data: {
+      history: rows,
+      pagination: { page: pageNum, limit: lim, total, totalPages: Math.ceil(total / lim) },
+      duplicates,
+      duplicateCount: duplicates.length,
+    },
+  });
+});
+
 module.exports = {
   listUsers,
   getUserDetail,
@@ -1712,6 +1847,7 @@ module.exports = {
   processRoi,
   processRoiManual,
   getRoiRunStatus,
+  getRoiHistory,
   distributeProfitShare,
   triggerRoiTransfer,
   triggerProfitShareTransfer,

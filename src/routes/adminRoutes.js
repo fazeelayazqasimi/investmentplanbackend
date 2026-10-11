@@ -12,6 +12,7 @@ const {
   processRoi,
   processRoiManual,
   getRoiRunStatus,
+  getRoiHistory,
   distributeProfitShare,
   triggerRoiTransfer,
   triggerProfitShareTransfer,
@@ -79,6 +80,8 @@ router.put('/settings', updateSettings);
 // ROI processing
 router.post('/roi/process', processRoi);
 router.post('/roi/process-manual', processRoiManual);
+// ROI history (date filters + same-day duplicate detection)
+router.get('/roi/history', getRoiHistory);
 // Run status/report — used by the client to resume after a reload or
 // timeout and to fetch the final report of a completed run.
 router.get('/roi/runs/:runId', getRoiRunStatus);
