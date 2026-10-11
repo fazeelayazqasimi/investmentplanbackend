@@ -477,6 +477,49 @@ const getStats = asyncHandler(async (req, res) => {
   const investmentTrendData = Object.values(buckets).map((b) => ({ month: b.month, investments: b.investments }));
   const roiDistribution = Object.values(buckets).map((b) => ({ month: b.month, roi: b.roi }));
 
+  // ---- Current month stats (carousel section) ----
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+
+  const [profitShareAgg, monthlyRoiAgg, commissionAggMonthly, withdrawalAgg, walletBalanceAgg] = await Promise.all([
+    Transaction.aggregate([
+      { $match: { type: 'PROFIT_SHARE', status: 'COMPLETED', createdAt: { $gte: monthStart } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+    Transaction.aggregate([
+      { $match: { type: 'ROI', status: 'COMPLETED', createdAt: { $gte: monthStart } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+    Transaction.aggregate([
+      { $match: { type: { $in: ['DIRECT_INCOME', 'LEVEL_INCOME'] }, status: 'COMPLETED', createdAt: { $gte: monthStart } } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]),
+    Transaction.aggregate([
+      { $match: { type: 'WITHDRAWAL', status: 'COMPLETED', createdAt: { $gte: monthStart } } },
+      { $group: { _id: null, total: { $sum: { $abs: '$amount' } } } },
+    ]),
+    Wallet.aggregate([
+      {
+        $group: {
+          _id: null,
+          total: {
+            $sum: {
+              $add: [
+                { $ifNull: ['$mainBalance', 0] },
+                { $ifNull: ['$roiBalance', 0] },
+                { $ifNull: ['$commissionBalance', 0] },
+                { $ifNull: ['$ewalletBalance', 0] },
+                { $ifNull: ['$profitShareBalance', 0] },
+                { $ifNull: ['$fundBalance', 0] },
+              ],
+            },
+          },
+        },
+      },
+    ]),
+  ]);
+
   res.status(200).json({
     success: true,
     message: 'Stats fetched successfully',
@@ -494,6 +537,11 @@ const getStats = asyncHandler(async (req, res) => {
       depositTrend: depositTrendData,
       investmentTrend: investmentTrendData,
       roiDistribution,
+      profitShareThisMonth: profitShareAgg[0] ? profitShareAgg[0].total : 0,
+      roiThisMonth: monthlyRoiAgg[0] ? monthlyRoiAgg[0].total : 0,
+      commissionThisMonth: commissionAggMonthly[0] ? commissionAggMonthly[0].total : 0,
+      withdrawalThisMonth: withdrawalAgg[0] ? withdrawalAgg[0].total : 0,
+      totalWalletBalance: walletBalanceAgg[0] ? walletBalanceAgg[0].total : 0,
       usersVsAdmins: [
         { name: 'Users', value: totalUsers },
         { name: 'Admins', value: totalAdmins },
