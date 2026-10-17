@@ -196,6 +196,10 @@ const systemSettingsSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    mainToFundTransferEnabled: {
+      type: Boolean,
+      default: false,
+    },
 
     // ==========================================
     // E-WALLET DOWNLINE INVESTMENT OFFER

@@ -623,6 +623,7 @@ const updateSettings = asyncHandler(async (req, res) => {
     'profitShareDistributionMethod',
     // Fund Wallet
     'fundTransferEnabled',
+    'mainToFundTransferEnabled',
     // Day-wise ROI
     'roiDays',
     // Pending Release

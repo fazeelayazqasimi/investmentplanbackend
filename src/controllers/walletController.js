@@ -222,6 +222,7 @@ const getTransferSettings = asyncHandler(async (req, res) => {
       roiTransferEnabled: settings.roiTransferEnabled,
       profitShareTransferEnabled: settings.profitShareTransferEnabled,
       fundTransferEnabled: settings.fundTransferEnabled,
+      mainToFundTransferEnabled: settings.mainToFundTransferEnabled,
       ewalletDownlineOfferEnabled: settings.ewalletDownlineOfferEnabled,
       ewalletMaxPercentage: settings.ewalletMaxPercentage,
       ewalletDownlineActivationEnabled: settings.ewalletDownlineActivationEnabled,

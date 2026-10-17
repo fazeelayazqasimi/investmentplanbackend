@@ -388,8 +388,8 @@ const transferMainToFund = async (userId, amount) => {
   const SystemSettings = require('../models/SystemSettings');
   const settings = await SystemSettings.getSettings();
 
-  if (!settings.fundTransferEnabled) {
-    const error = new Error('Fund Wallet transfers are currently disabled by admin');
+  if (!settings.mainToFundTransferEnabled) {
+    const error = new Error('Move to Fund Wallet is currently disabled by admin');
     error.statusCode = 400;
     throw error;
   }
